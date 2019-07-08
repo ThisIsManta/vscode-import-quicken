@@ -1,0 +1,271 @@
+{
+    "name": "import-quicken",
+    "displayName": "Manta's Import Quicken",
+    "description": "Insert import/require statements quickly.",
+    "version": "0.0.1",
+    "publisher": "thisismanta",
+    "categories": [
+        "Snippets"
+    ],
+    "keywords": [
+        "import",
+        "require",
+        "javascript",
+        "file",
+        "module"
+    ],
+    "repository": {
+        "url": "https://github.com/ThisIsManta/vscode-import-quicken"
+    },
+    "bugs": {
+        "url": "https://github.com/ThisIsManta/vscode-import-quicken/issues"
+    },
+    "galleryBanner": {
+        "color": "#212121",
+        "theme": "dark"
+    },
+    "engines": {
+        "vscode": "^1.36.0"
+    },
+    "activationEvents": [
+        "onCommand:importQuicken.addImport",
+        "onCommand:importQuicken.fixImport",
+        "onCommand:importQuicken.convertImport"
+    ],
+    "main": "./dist/extension",
+    "contributes": {
+        "commands": [
+            {
+                "command": "importQuicken.addImport",
+                "title": "Insert Import/Require",
+                "category": "Import Quicken"
+            },
+            {
+                "command": "importQuicken.fixImport",
+                "title": "Fix Import/Require",
+                "category": "Import Quicken"
+            },
+            {
+                "command": "importQuicken.convertImport",
+                "title": "Convert Require To Import",
+                "category": "Import Quicken"
+            }
+        ],
+        "configuration": {
+            "title": "Code Quicken",
+            "properties": {
+                "importQuicken.history": {
+                    "description": "Set the maximum number of the recently used items at the top of the import/require list when no search words. Setting this to 0 will hide the recently used items.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 20,
+                    "default": 3
+                },
+                "importQuicken.javascript.syntax": {
+                    "description": "Insert either ES2015's import or AMD's require syntax. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
+                    "type": "string",
+                    "enum": [
+                        "import",
+                        "require",
+                        "auto"
+                    ],
+                    "default": "auto"
+                },
+                "importQuicken.javascript.grouping": {
+                    "description": "Allow grouping multiple-imports. For example, adding `bar` to `import { foo } from 'zoo';` so it becomes `import { foo, bar } from 'zoo';`",
+                    "type": "boolean",
+                    "default": false
+                },
+                "importQuicken.javascript.fileExtension": {
+                    "description": "Insert JS/JSX/TS/TSX file extension to the path.",
+                    "type": "boolean",
+                    "default": true
+                },
+                "importQuicken.javascript.indexFile": {
+                    "description": "Insert \"index\" file name and also its extension to the path.",
+                    "type": "boolean",
+                    "default": false
+                },
+                "importQuicken.javascript.quoteCharacter": {
+                    "description": "Insert either single quotes or double quotes as a string enclosure. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
+                    "type": "string",
+                    "enum": [
+                        "single",
+                        "double",
+                        "auto"
+                    ],
+                    "default": "auto"
+                },
+                "importQuicken.javascript.semiColons": {
+                    "description": "Insert statement-ending semi-colons. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
+                    "type": "string",
+                    "enum": [
+                        "always",
+                        "never",
+                        "auto"
+                    ],
+                    "default": "auto"
+                },
+                "importQuicken.javascript.predefinedVariableNames": {
+                    "description": "Replace the given file-name keys with its respective variable-name values. The file-name keys must be written in regular expression. For example, setting this to `{ \"foo-(\\\\d)+\": \"bar_$1\" }` writes `const bar_123 = require(\"./foo-123.js\");`",
+                    "type": "object",
+                    "patternProperties": {
+                        ".": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {}
+                },
+                "importQuicken.javascript.variableNamingConvention": {
+                    "description": "Define the variable naming convention. This has no effects on \"importQuicken.javascript.predefinedVariableNames\"",
+                    "type": "string",
+                    "enum": [
+                        "camelCase",
+                        "PascalCase",
+                        "snake_case",
+                        "lowercase",
+                        "none"
+                    ],
+                    "default": "none"
+                },
+                "importQuicken.javascript.filteredFileList": {
+                    "description": "Filter the files shown in the list when adding an import/require statement. Both keys and values must be written in regular expression. For example, you are working on a file named \"foo.js\", and you want to see only the files ending with \".spec.js\" in the list when adding an import statement, then you must set this to `{ \"/foo\\\\.js$\": \"\\\\.spec\\\\.js$\" }`. Note that the path separators will always be POSIX slash characters. The term `${TM_FILENAME_BASE}` in your right-side regular expression will be replaced with the active file name without its extension.",
+                    "type": "object",
+                    "patternProperties": {
+                        ".": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {}
+                },
+                "importQuicken.typescript.grouping": {
+                    "description": "Allow grouping multiple-imports. For example, adding `bar` to `import { foo } from 'zoo';` so it becomes `import { foo, bar } from 'zoo';`",
+                    "type": "boolean",
+                    "default": true
+                },
+                "importQuicken.typescript.fileExtension": {
+                    "description": "Insert JS/JSX/TS/TSX file extension to the path.",
+                    "type": "boolean",
+                    "default": true
+                },
+                "importQuicken.typescript.indexFile": {
+                    "description": "Insert \"index\" file name and also its extension to the path.",
+                    "type": "boolean",
+                    "default": false
+                },
+                "importQuicken.typescript.quoteCharacter": {
+                    "description": "Insert either single quotes or double quotes as a string enclosure. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
+                    "type": "string",
+                    "enum": [
+                        "single",
+                        "double",
+                        "auto"
+                    ],
+                    "default": "auto"
+                },
+                "importQuicken.typescript.semiColons": {
+                    "description": "Insert statement-ending semi-colons. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
+                    "type": "string",
+                    "enum": [
+                        "always",
+                        "never",
+                        "auto"
+                    ],
+                    "default": "auto"
+                },
+                "importQuicken.typescript.predefinedVariableNames": {
+                    "description": "Replace the given file-name keys with its respective variable-name values. The file-name keys must be written in regular expression. For example, setting this to `{ \"foo-(\\\\d)+\": \"bar_$1\" }` writes `import bar_123 from \"./foo-123.ts\";`",
+                    "type": "object",
+                    "patternProperties": {
+                        ".": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {}
+                },
+                "importQuicken.typescript.variableNamingConvention": {
+                    "description": "Define the variable naming convention. This has no effects on \"importQuicken.typescript.predefinedVariableNames\"",
+                    "type": "string",
+                    "enum": [
+                        "camelCase",
+                        "PascalCase",
+                        "snake_case",
+                        "lowercase",
+                        "none"
+                    ],
+                    "default": "none"
+                },
+                "importQuicken.typescript.filteredFileList": {
+                    "description": "Filter the files shown in the list when adding an import/require statement. Both keys and values must be written in regular expression. For example, you are working on a file named \"foo.ts\", and you want to see only the files ending with \".spec.ts\" in the list when adding an import statement, then you must set this to `{ \"/foo\\\\.ts$\": \"\\\\.spec\\\\.ts$\" }`. Note that the path separators will always be POSIX slash characters. The term `${TM_FILENAME_BASE}` in your right-side regular expression will be replaced with the active file name without its extension.",
+                    "type": "object",
+                    "patternProperties": {
+                        ".": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {}
+                },
+                "importQuicken.stylus.syntax": {
+                    "description": "Insert either @import or @require. See also http://stylus-lang.com/docs/import.html",
+                    "type": "string",
+                    "enum": [
+                        "@import",
+                        "@require"
+                    ],
+                    "default": "@import"
+                },
+                "importQuicken.stylus.fileExtension": {
+                    "description": "Insert STYL file extension to the path.",
+                    "type": "boolean",
+                    "default": true
+                },
+                "importQuicken.stylus.indexFile": {
+                    "description": "Insert \"index\" file name and also its extension to the path.",
+                    "type": "boolean",
+                    "default": true
+                },
+                "importQuicken.stylus.quoteCharacter": {
+                    "description": "Insert either single quotes or double quotes as a string enclosure.",
+                    "type": "string",
+                    "enum": [
+                        "single",
+                        "double"
+                    ],
+                    "default": "double"
+                },
+                "importQuicken.stylus.semiColons": {
+                    "description": "Insert statement-ending semi-colons.",
+                    "type": "boolean",
+                    "default": true
+                }
+            }
+        },
+        "keybindings": [
+            {
+                "command": "importQuicken.addImport",
+                "key": "ctrl+shift+i",
+                "when": "editorTextFocus && !editorReadonly"
+            }
+        ]
+    },
+    "scripts": {
+        "compile": "tsc --watch --project ./",
+        "vscode:prepublish": "tsc --skipLibCheck --project ./",
+        "preversion": "git push --dry-run origin master:master",
+        "version": "vsce publish",
+        "postversion": "git push --tags --quiet origin master:master"
+    },
+    "devDependencies": {
+        "@types/glob": "^7.1.1",
+        "@types/lodash": "^4.14.135",
+        "@types/node": "^10.0.0",
+        "@types/vscode": "1.36.0",
+        "vscode": "^1.1.35"
+    },
+    "dependencies": {
+        "glob": "^7.1.4",
+        "lodash": "^4.17.11",
+        "stylus": "^0.54.5",
+        "typescript": "^3.5.2"
+    }
+}
