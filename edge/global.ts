@@ -13,7 +13,7 @@ export interface Configurations {
 }
 
 export interface Language {
-	getItems(document: vscode.TextDocument): Promise<{ shortItems: Array<Item>; totalItems: Array<Item> } | null>
+	getItems(document: vscode.TextDocument): Promise<Array<Item> | null>
 	addItem?(filePath: string): void
 	cutItem?(filePath: string): void
 	fixImport?(editor: vscode.TextEditor, document: vscode.TextDocument, cancellationToken: vscode.CancellationToken): Promise<boolean | null>
@@ -26,6 +26,7 @@ export interface Item extends vscode.QuickPickItem {
 	addImport(editor: vscode.TextEditor): Promise<null | undefined>
 }
 
+// TODO: remove this
 export function getSortingLogic<T extends { fileInfo: FileInfo }>(rootPath: string) {
 	return [
 		(item: T) => item.fileInfo.directoryPath === rootPath

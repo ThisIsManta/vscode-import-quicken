@@ -61,50 +61,10 @@
                     "maximum": 20,
                     "default": 3
                 },
-                "importQuicken.javascript.syntax": {
-                    "description": "Insert either ES2015's import or AMD's require syntax. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
-                    "type": "string",
-                    "enum": [
-                        "import",
-                        "require",
-                        "auto"
-                    ],
-                    "default": "auto"
-                },
-                "importQuicken.javascript.grouping": {
-                    "description": "Allow grouping multiple-imports. For example, adding `bar` to `import { foo } from 'zoo';` so it becomes `import { foo, bar } from 'zoo';`",
-                    "type": "boolean",
-                    "default": false
-                },
-                "importQuicken.javascript.fileExtension": {
-                    "description": "Insert JS/JSX/TS/TSX file extension to the path.",
-                    "type": "boolean",
-                    "default": true
-                },
                 "importQuicken.javascript.indexFile": {
                     "description": "Insert \"index\" file name and also its extension to the path.",
                     "type": "boolean",
                     "default": false
-                },
-                "importQuicken.javascript.quoteCharacter": {
-                    "description": "Insert either single quotes or double quotes as a string enclosure. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
-                    "type": "string",
-                    "enum": [
-                        "single",
-                        "double",
-                        "auto"
-                    ],
-                    "default": "auto"
-                },
-                "importQuicken.javascript.semiColons": {
-                    "description": "Insert statement-ending semi-colons. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
-                    "type": "string",
-                    "enum": [
-                        "always",
-                        "never",
-                        "auto"
-                    ],
-                    "default": "auto"
                 },
                 "importQuicken.javascript.predefinedVariableNames": {
                     "description": "Replace the given file-name keys with its respective variable-name values. The file-name keys must be written in regular expression. For example, setting this to `{ \"foo-(\\\\d)+\": \"bar_$1\" }` writes `const bar_123 = require(\"./foo-123.js\");`",
@@ -126,6 +86,13 @@
                         "lowercase",
                         "none"
                     ],
+                    "enum": [
+                        "camelCase",
+                        "PascalCase",
+                        "snake_case",
+                        "lowercase",
+                        "none"
+                    ],
                     "default": "none"
                 },
                 "importQuicken.javascript.filteredFileList": {
@@ -138,40 +105,10 @@
                     },
                     "default": {}
                 },
-                "importQuicken.typescript.grouping": {
-                    "description": "Allow grouping multiple-imports. For example, adding `bar` to `import { foo } from 'zoo';` so it becomes `import { foo, bar } from 'zoo';`",
-                    "type": "boolean",
-                    "default": true
-                },
-                "importQuicken.typescript.fileExtension": {
-                    "description": "Insert JS/JSX/TS/TSX file extension to the path.",
-                    "type": "boolean",
-                    "default": true
-                },
                 "importQuicken.typescript.indexFile": {
                     "description": "Insert \"index\" file name and also its extension to the path.",
                     "type": "boolean",
                     "default": false
-                },
-                "importQuicken.typescript.quoteCharacter": {
-                    "description": "Insert either single quotes or double quotes as a string enclosure. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
-                    "type": "string",
-                    "enum": [
-                        "single",
-                        "double",
-                        "auto"
-                    ],
-                    "default": "auto"
-                },
-                "importQuicken.typescript.semiColons": {
-                    "description": "Insert statement-ending semi-colons. Setting this to \"auto\" will resolve using the current viewing file or nearby files automatically.",
-                    "type": "string",
-                    "enum": [
-                        "always",
-                        "never",
-                        "auto"
-                    ],
-                    "default": "auto"
                 },
                 "importQuicken.typescript.predefinedVariableNames": {
                     "description": "Replace the given file-name keys with its respective variable-name values. The file-name keys must be written in regular expression. For example, setting this to `{ \"foo-(\\\\d)+\": \"bar_$1\" }` writes `import bar_123 from \"./foo-123.ts\";`",

@@ -26,7 +26,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     let config: Configurations
     function initialize() {
-        config = vscode.workspace.getConfiguration().get<Configurations>('codeQuicken')
+        config = vscode.workspace.getConfiguration().get<Configurations>('importQuicken')
 
         localStorage.load(config)
 
@@ -44,7 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
     initialize()
     vscode.workspace.onDidChangeConfiguration(initialize)
 
-    context.subscriptions.push(vscode.commands.registerCommand('codeQuicken.addImport', async function () {
+    context.subscriptions.push(vscode.commands.registerCommand('importQuicken.addImport', async function () {
         const editor = vscode.window.activeTextEditor
         const document = editor && editor.document
 
@@ -79,9 +79,8 @@ export function activate(context: vscode.ExtensionContext) {
                 return null
             }
 
-            const { shortItems, totalItems } = items
-            const recentItems = localStorage.recentSelectedItems.get(language, totalItems)
-            const quickItems = _.unionBy(recentItems, shortItems, item => item.id)
+            // const recentItems = localStorage.recentSelectedItems.get(language, totalItems)
+            const quickItems = items //_.unionBy(recentItems, shortItems, item => item.id)
 
             hideProgress()
 
@@ -89,7 +88,7 @@ export function activate(context: vscode.ExtensionContext) {
             picker.placeholder = 'Type a file path or node module name'
             picker.items = quickItems
             picker.matchOnDescription = true
-            picker.onDidChangeValue(() => {
+            /* picker.onDidChangeValue(() => {
                 if (picker.value.length > 0 && picker.items !== totalItems) {
                     picker.items = totalItems
                 }
@@ -97,7 +96,7 @@ export function activate(context: vscode.ExtensionContext) {
                 if (picker.value.length === 0 && picker.items !== quickItems) {
                     picker.items = quickItems
                 }
-            })
+            }) */
             picker.onDidAccept(async () => {
                 picker.hide()
 
@@ -121,7 +120,7 @@ export function activate(context: vscode.ExtensionContext) {
         hideProgress()
     }))
 
-    context.subscriptions.push(vscode.commands.registerCommand('codeQuicken.fixImport', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('importQuicken.fixImport', async () => {
         const editor = vscode.window.activeTextEditor
         const document = editor.document
 
@@ -163,7 +162,7 @@ export function activate(context: vscode.ExtensionContext) {
         cancellationEvent.dispose()
     }))
 
-    context.subscriptions.push(vscode.commands.registerCommand('codeQuicken.convertImport', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('importQuicken.convertImport', async () => {
         const editor = vscode.window.activeTextEditor
 
         if (editor === undefined) {

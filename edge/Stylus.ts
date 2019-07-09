@@ -44,10 +44,7 @@ export default class Stylus implements Language {
 
 		const filteredFileItems = _.reject(this.fileItemCache, item => item.fileInfo.fullPath === documentFileInfo.fullPath)
 
-		return {
-			shortItems: getShortList(filteredFileItems, documentFileInfo),
-			totalItems: filteredFileItems,
-		}
+		return filteredFileItems
 	}
 
 	addItem(filePath: string) {
