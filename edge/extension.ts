@@ -1,7 +1,7 @@
 import * as _ from 'lodash'
 import * as vscode from 'vscode'
 
-import { Configurations, Language, Item } from './global'
+import { ExtensionLevelConfigurations, Language, Item } from './global'
 import JavaScript from './JavaScript'
 import TypeScript from './TypeScript'
 import Stylus from './Stylus'
@@ -22,9 +22,9 @@ export function activate(context: vscode.ExtensionContext) {
         })
     })
 
-    let config: Configurations
+    let config: ExtensionLevelConfigurations
     function initialize() {
-        config = vscode.workspace.getConfiguration().get<Configurations>('importQuicken')
+        config = vscode.workspace.getConfiguration().get<ExtensionLevelConfigurations>('importQuicken')
 
         if (languages) {
             languages.forEach(language => language.reset())

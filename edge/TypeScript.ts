@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as fp from 'path'
 import * as _ from 'lodash'
 import * as vscode from 'vscode'
-import { Configurations } from './global'
+import { ExtensionLevelConfigurations } from './global'
 import JavaScript from './JavaScript'
 import * as ts from 'typescript'
 
@@ -10,12 +10,10 @@ const JAVASCRIPT_EXTENSION = /\.jsx?$/i
 const TYPESCRIPT_EXTENSION = /\.tsx?$/i
 
 export default class TypeScript extends JavaScript {
-	constructor(config: Configurations, fileWatch: vscode.FileSystemWatcher) {
+	constructor(extensionLevelConfig: ExtensionLevelConfigurations, fileWatch: vscode.FileSystemWatcher) {
 		super({
-			...config,
-			javascript: {
-				...config.typescript,
-			}
+			...extensionLevelConfig,
+			javascript: extensionLevelConfig.typescript
 		}, fileWatch)
 	}
 

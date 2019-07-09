@@ -5,35 +5,14 @@ import * as _ from 'lodash'
 import * as vscode from 'vscode'
 import * as ts from 'typescript'
 
-import { Configurations, Language, Item, findFilesRoughly, hasFileExtensionOf } from './global';
+import { ExtensionLevelConfigurations, Language, Item, findFilesRoughly, hasFileExtensionOf } from './global';
 import FileInfo from './FileInfo'
 
-export interface LanguageOptions {
-	filteredFileList: { [currentFilePattern: string]: string }
+export interface JavaScriptConfigurations {
+	exclude: Array<string>
 }
 
 const SUPPORTED_EXTENSION = /\.(j|t)sx?$/i
-
-const w = new Map<string, number>()
-function Φ<T>(f: () => T) {
-	const s = Date.now()
-	const q = () => {
-		const e = Date.now() - s
-		if (w.has(f.name)) {
-			w.set(f.name, w.get(f.name) + e)
-		} else {
-			w.set(f.name, e)
-		}
-	}
-
-	const r = f() as any
-	if (r.then) {
-		r.then(q)
-	} else {
-		q()
-	}
-	return r
-}
 
 export default class JavaScript implements Language {
 	private fileItemCache: Array<FileItem>
@@ -41,10 +20,10 @@ export default class JavaScript implements Language {
 	private nodeItemCache = new Map<string, Array<NodeItem>>()
 	private ultimateCache: Array<Item>
 
-	public options: LanguageOptions
+	public configs: JavaScriptConfigurations
 
-	constructor(config: Configurations, fileWatch: vscode.FileSystemWatcher) {
-		this.options = config.javascript
+	constructor(extensionLevelConfigs: ExtensionLevelConfigurations, fileWatch: vscode.FileSystemWatcher) {
+		this.configs = extensionLevelConfigs.javascript
 
 		fileWatch.onDidChange(e => {
 			if (fp.basename(e.fsPath) === 'package.json') {
@@ -69,10 +48,17 @@ export default class JavaScript implements Language {
 		}
 
 		if (!this.fileItemCache) {
+			const fileExclusionList = this.configs.exclude.map(pattern => new RegExp(pattern))
+
 			const fileLinks = await vscode.workspace.findFiles('**/*')
+
+			const rootPath = vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath
 
 			this.fileItemCache = _.chain(fileLinks)
 				.filter(await this.createFileFilter())
+				.reject(fileLink => fileExclusionList.some(pattern =>
+					pattern.test(_.trimStart(fileLink.fsPath.substring(rootPath.length), fp.sep)))
+				)
 				.map(fileLink => new FileItem(fileLink.fsPath, this.identifierCache))
 				.sortBy(file => file.info.fileNameWithExtension)
 				.value()

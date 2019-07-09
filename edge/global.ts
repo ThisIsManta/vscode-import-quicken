@@ -5,11 +5,11 @@ import FileInfo from './FileInfo'
 import * as JavaScript from './JavaScript'
 import * as Stylus from './Stylus'
 
-export interface Configurations {
+export interface ExtensionLevelConfigurations {
 	history: number
-	javascript: JavaScript.LanguageOptions
-	typescript: JavaScript.LanguageOptions
-	stylus: Stylus.LanguageOptions
+	javascript: JavaScript.JavaScriptConfigurations
+	typescript: JavaScript.JavaScriptConfigurations
+	stylus: Stylus.StylusConfigurations
 }
 
 export interface Language {

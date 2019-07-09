@@ -4,10 +4,10 @@ import * as _ from 'lodash'
 import * as vscode from 'vscode'
 import { Parser, nodes as Nodes } from 'stylus'
 
-import { Configurations, Language, Item, getShortList, getSortingLogic, findFilesRoughly } from './global';
+import { ExtensionLevelConfigurations, Language, Item, getSortingLogic, findFilesRoughly } from './global';
 import FileInfo from './FileInfo'
 
-export interface LanguageOptions {
+export interface StylusConfigurations {
 	syntax: '@import' | '@require'
 	fileExtension: boolean
 	indexFile: boolean
@@ -18,11 +18,11 @@ export interface LanguageOptions {
 const SUPPORTED_LANGUAGE = /^stylus$/
 
 export default class Stylus implements Language {
-	private options: LanguageOptions
+	private configs: StylusConfigurations
 	private fileItemCache: Array<FileItem>
 
-	constructor(config: Configurations) {
-		this.options = config.stylus
+	constructor(extensionLevelConfigs: ExtensionLevelConfigurations) {
+		this.configs = extensionLevelConfigs.stylus
 	}
 
 	async getItems(document: vscode.TextDocument) {
@@ -37,7 +37,7 @@ export default class Stylus implements Language {
 			const fileLinks = await vscode.workspace.findFiles('**/*.{styl,css,jpg,jpeg,png,gif,svg,otf,ttf,woff,woff2,eot}')
 
 			this.fileItemCache = _.chain(fileLinks)
-				.map(fileLink => new FileItem(new FileInfo(fileLink.fsPath), rootPath, this.options))
+				.map(fileLink => new FileItem(new FileInfo(fileLink.fsPath), rootPath, this.configs))
 				.sortBy(getSortingLogic(rootPath))
 				.value()
 		}
@@ -51,7 +51,7 @@ export default class Stylus implements Language {
 		if (this.fileItemCache) {
 			const fileInfo = new FileInfo(filePath)
 			const rootPath = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath)).uri.fsPath
-			this.fileItemCache.push(new FileItem(fileInfo, rootPath, this.options))
+			this.fileItemCache.push(new FileItem(fileInfo, rootPath, this.configs))
 		}
 	}
 
@@ -124,12 +124,12 @@ export default class Stylus implements Language {
 
 			} else if (matchingFullPaths.length === 1) {
 				await editor.edit(worker => {
-					const item = new FileItem(new FileInfo(matchingFullPaths[0]), rootPath, this.options)
+					const item = new FileItem(new FileInfo(matchingFullPaths[0]), rootPath, this.configs)
 					worker.replace(getEditableRange(node), item.getRelativePath(documentFileInfo.directoryPath))
 				})
 
 			} else {
-				const candidateItems = matchingFullPaths.map(path => new FileItem(new FileInfo(path), rootPath, this.options))
+				const candidateItems = matchingFullPaths.map(path => new FileItem(new FileInfo(path), rootPath, this.configs))
 				const selectedItem = await vscode.window.showQuickPick(candidateItems, { placeHolder: node.val })
 
 				if (!selectedItem) {
@@ -172,13 +172,13 @@ export default class Stylus implements Language {
 }
 
 class FileItem implements Item {
-	private options: LanguageOptions
+	private options: StylusConfigurations
 	readonly id: string;
 	readonly label: string;
 	readonly description: string;
 	readonly fileInfo: FileInfo
 
-	constructor(fileInfo: FileInfo, rootPath: string, options: LanguageOptions) {
+	constructor(fileInfo: FileInfo, rootPath: string, options: StylusConfigurations) {
 		this.id = fileInfo.fullPathForPOSIX
 		this.options = options
 		this.fileInfo = fileInfo
