@@ -5,18 +5,10 @@ import * as _ from 'lodash'
 import * as vscode from 'vscode'
 import * as ts from 'typescript'
 
-import { Configurations, Language, Item, getShortList, getSortingLogic, findFilesRoughly, hasFileExtensionOf } from './global';
+import { Configurations, Language, Item, findFilesRoughly, hasFileExtensionOf } from './global';
 import FileInfo from './FileInfo'
 
 export interface LanguageOptions {
-	syntax: 'import' | 'require' | 'auto'
-	grouping: boolean
-	fileExtension: boolean
-	indexFile: boolean
-	quoteCharacter: 'single' | 'double' | 'auto'
-	semiColons: 'always' | 'never' | 'auto'
-	predefinedVariableNames: object
-	variableNamingConvention: 'camelCase' | 'PascalCase' | 'snake_case' | 'lowercase' | 'none'
 	filteredFileList: { [currentFilePattern: string]: string }
 }
 
@@ -45,8 +37,8 @@ function Φ<T>(f: () => T) {
 
 export default class JavaScript implements Language {
 	private fileItemCache: Array<FileItem>
-	private nodeItemCache = new Map<string, Array<NodeItem>>()
 	private identifierCache = new Map<string, IdentifierMap>()
+	private nodeItemCache = new Map<string, Array<NodeItem>>()
 	private ultimateCache: Array<Item>
 
 	public options: LanguageOptions
@@ -56,6 +48,8 @@ export default class JavaScript implements Language {
 
 		fileWatch.onDidChange(e => {
 			if (fp.basename(e.fsPath) === 'package.json') {
+				createFindClosestPackageJson.cache.clear()
+
 				this.nodeItemCache.delete(e.fsPath)
 			}
 		})
@@ -74,21 +68,17 @@ export default class JavaScript implements Language {
 			return null
 		}
 
-		const documentFileInfo = new FileInfo(document.fileName)
-		const rootPath = vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath
-		const workPath = _.trimStart(document.fileName.substring(rootPath.length).replace(/\\/g, fp.posix.sep), fp.posix.sep)
-
 		if (!this.fileItemCache) {
-			const fileLinks = await vscode.workspace.findFiles('**/*.*')
+			const fileLinks = await vscode.workspace.findFiles('**/*')
 
 			this.fileItemCache = _.chain(fileLinks)
 				.filter(await this.createFileFilter())
 				.map(fileLink => new FileItem(fileLink.fsPath, this.identifierCache))
+				.sortBy(file => file.info.fileNameWithExtension)
 				.value()
 		}
 
-		const possibleModulePathList = await getPossibleModulePathList(document) // TODO: scan the node_modules beforehand
-		const [packageJsonPath] = possibleModulePathList.map(path => fp.join(path, 'package.json'))
+		const { packageJsonPath, nodeModulePathList } = (await createFindClosestPackageJson())(document.fileName)
 		if (packageJsonPath && this.nodeItemCache.has(packageJsonPath) === false) {
 			const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'))
 			const dependencies = _.chain([packageJson.devDependencies, packageJson.dependencies])
@@ -98,15 +88,15 @@ export default class JavaScript implements Language {
 
 			let nodeJsAPIs: Array<NodeItem> = []
 			if (dependencies.some(name => name === '@types/node')) {
-				const nodeJsVersion = getLocalModuleVersion('@types/node', possibleModulePathList)
-				nodeJsAPIs = getNodeJsAPIs(possibleModulePathList).map(name => new NodeItem(name, nodeJsVersion, this))
+				const nodeJsVersion = getLocalModuleVersion('@types/node', nodeModulePathList)
+				nodeJsAPIs = getNodeJsAPIs(nodeModulePathList).map(name => new NodeItem(name, nodeJsVersion, this))
 			}
 
 			this.nodeItemCache.set(
 				packageJsonPath,
 				_.chain(dependencies)
 					.reject(name => name.startsWith('@types/'))
-					.map(name => new NodeItem(name, getLocalModuleVersion(name, possibleModulePathList), this))
+					.map(name => new NodeItem(name, getLocalModuleVersion(name, nodeModulePathList), this))
 					.concat(nodeJsAPIs)
 					.sortBy(item => item.name)
 					.value()
@@ -115,7 +105,9 @@ export default class JavaScript implements Language {
 
 		if (!this.ultimateCache) {
 			this.ultimateCache = [
-				..._.flatMap(this.fileItemCache, item => item.identifiers),
+				..._.chain(this.fileItemCache)
+					.flatMap(file => file.identifiers)
+					.value(),
 				...(this.nodeItemCache.get(packageJsonPath) || [])
 			]
 		}
@@ -437,13 +429,16 @@ class FileItem {
 	readonly info: FileInfo
 	readonly identifiers: Array<IdentifierItem>
 
-	constructor(fullPath: string, cache: Map<string, IdentifierMap>) {
-		this.info = new FileInfo(fullPath)
+	constructor(filePath: string, cache: Map<string, IdentifierMap>) {
+		this.info = new FileInfo(filePath)
 
-		console.log(fullPath)
-		this.identifiers = Array.from(getExportedIdentifiers(this.info.fullPath, cache))
-			.map(([name, { text, pathList }]) => new IdentifierItem(name, text, this, cache))
-		console.log('x');
+		this.identifiers = _.chain(Array.from(getExportedIdentifiers(this.info.fullPath, cache)))
+			.map(([name, { text }]) => new IdentifierItem(name, text, this, cache))
+			.sortBy(
+				(identifier) => identifier.defaultExported ? 0 : 1,
+				identifier => identifier.name.toLowerCase()
+			)
+			.value()
 	}
 
 	async getRelativePath(codeTree: ts.SourceFile, document: vscode.TextDocument) {
@@ -473,8 +468,8 @@ class IdentifierItem implements Item {
 	private file: FileItem
 	private cache: Map<string, IdentifierMap>
 	readonly name: string
-	private defaultExported: boolean
-	sortingKey: string
+	readonly defaultExported: boolean
+	readonly sortingKey: string
 
 	constructor(name: string, text: string, file: FileItem, cache: Map<string, IdentifierMap>) {
 		this.id = file.info.fullPath + '::' + name
@@ -493,11 +488,6 @@ class IdentifierItem implements Item {
 
 		const workspaceDirectory = vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri).uri.fsPath
 		this.description = _.trim(file.info.fullPath.substring(workspaceDirectory.length), fp.sep)
-
-		/* const sourcePath = _.last(sourcePathList)
-		if (sourcePath !== file.info.fullPath) {
-			this.description = _.trim(sourcePath.substring(workspaceDirectory.length), fp.sep)
-		} */
 
 		this.detail = _.truncate(text, { length: 120, omission: '...' })
 
@@ -910,7 +900,12 @@ class NodeItem implements Item {
 	}
 
 	private async getTypeDefinitions(document: vscode.TextDocument) {
-		const definitionPath = (await getPossibleModulePathList(document))
+		const { nodeModulePathList } = (await createFindClosestPackageJson())(document.fileName)
+		if (!nodeModulePathList) {
+			return []
+		}
+
+		const definitionPath = nodeModulePathList
 			.map(path => fp.join(path, 'node_modules', '@types/' + this.label, 'index.d.ts'))
 			.find(path => fs.existsSync(path))
 		if (definitionPath === undefined) {
@@ -1598,8 +1593,8 @@ function focusAt(node: { getStart: () => number, getEnd: () => number }, documen
 	)
 }
 
-function getLocalModuleVersion(name: string, possibleModulePathList: Array<string>) {
-	for (const modulePath of possibleModulePathList) {
+function getLocalModuleVersion(name: string, modulePathList: Array<string>) {
+	for (const modulePath of modulePathList) {
 		try {
 			const packageJson = JSON.parse(fs.readFileSync(fp.join(modulePath, 'node_modules', name, 'package.json'), 'utf-8'))
 			if (packageJson.version) {
@@ -1635,25 +1630,26 @@ function getNodeJsAPIs(possibleModulePathList: Array<string>) {
 	return []
 }
 
-async function getPossibleModulePathList(document: vscode.TextDocument) {
-	const packageJsonPath = _.chain(await vscode.workspace.findFiles('**/package.json', '**/node_modules/**'))
-		.map(link => link.fsPath)
-		.filter(path => document.fileName.startsWith(fp.dirname(path) + fp.sep))
-		.maxBy(path => fp.dirname(path).split(fp.sep).length)
+const createFindClosestPackageJson = _.memoize(async () => {
+	const yarnLockPathList = (await vscode.workspace.findFiles('**/yarn.lock', '**/node_modules/**')).map(link => link.fsPath)
+
+	const packageJsonPathList = (await vscode.workspace.findFiles('**/package.json', '**/node_modules/**')).map(link => link.fsPath)
+
+	const list = _.chain(packageJsonPathList)
+		.map(packageJsonPath => ({
+			packageJsonPath,
+			nodeModulePathList: _.chain(yarnLockPathList)
+				.filter(yarnLockPath => checkYarnWorkspace(packageJsonPath, yarnLockPath))
+				.concat(packageJsonPath)
+				.map(path => fp.dirname(path))
+				.uniq()
+				.value()
+		}))
+		.orderBy(({ packageJsonPath }) => fp.dirname(packageJsonPath).split(fp.sep).length, 'desc')
 		.value()
 
-	const yarnLockPath = _.chain(await vscode.workspace.findFiles('**/yarn.lock', '**/node_modules/**'))
-		.map(link => link.fsPath)
-		.filter(path => document.fileName.startsWith(fp.dirname(path) + fp.sep))
-		.maxBy(path => fp.dirname(path).split(fp.sep).length)
-		.value()
-
-	const possibleModulePathList = [fp.dirname(packageJsonPath)]
-	if (checkYarnWorkspace(packageJsonPath, yarnLockPath)) {
-		possibleModulePathList.push(fp.dirname(yarnLockPath))
-	}
-	return possibleModulePathList
-}
+	return (filePath: string): (typeof list)[0] => list.find(({ packageJsonPath }) => (fp.dirname(packageJsonPath) + fp.sep).startsWith(filePath))
+})
 
 // Copy from https://github.com/ThisIsManta/vscode-package-watch/blob/master/edge/extension.ts
 function checkYarnWorkspace(packageJsonPath: string, yarnLockPath: string) {

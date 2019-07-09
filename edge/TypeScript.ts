@@ -15,11 +15,6 @@ export default class TypeScript extends JavaScript {
 			...config,
 			javascript: {
 				...config.typescript,
-				predefinedVariableNames: {
-					...config.typescript.predefinedVariableNames,
-					..._.omit(config.javascript.predefinedVariableNames, _.keys(config.typescript.predefinedVariableNames))
-				},
-				syntax: 'import',
 			}
 		}, fileWatch)
 	}
@@ -30,11 +25,6 @@ export default class TypeScript extends JavaScript {
 		}
 
 		return ['ts', 'tsx']
-	}
-
-	checkIfFileExtensionShouldBeRemoved(targetFileExtension: string, document: vscode.TextDocument) {
-		return super.checkIfFileExtensionShouldBeRemoved(targetFileExtension, document) ||
-			document.languageId.startsWith('typescript') && TYPESCRIPT_EXTENSION.test(targetFileExtension)
 	}
 
 	async checkIfImportDefaultIsPreferredOverNamespace() {

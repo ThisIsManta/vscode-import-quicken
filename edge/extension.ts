@@ -2,14 +2,12 @@ import * as _ from 'lodash'
 import * as vscode from 'vscode'
 
 import { Configurations, Language, Item } from './global'
-import LocalStorage from './LocalStorage'
 import JavaScript from './JavaScript'
 import TypeScript from './TypeScript'
 import Stylus from './Stylus'
 
 let languages: Array<Language>
 let fileWatch: vscode.FileSystemWatcher
-let localStorage = new LocalStorage()
 
 export function activate(context: vscode.ExtensionContext) {
     fileWatch = vscode.workspace.createFileSystemWatcher('**/*')
@@ -27,8 +25,6 @@ export function activate(context: vscode.ExtensionContext) {
     let config: Configurations
     function initialize() {
         config = vscode.workspace.getConfiguration().get<Configurations>('importQuicken')
-
-        localStorage.load(config)
 
         if (languages) {
             languages.forEach(language => language.reset())
@@ -79,24 +75,12 @@ export function activate(context: vscode.ExtensionContext) {
                 return null
             }
 
-            // const recentItems = localStorage.recentSelectedItems.get(language, totalItems)
-            const quickItems = items //_.unionBy(recentItems, shortItems, item => item.id)
-
             hideProgress()
 
             const picker = vscode.window.createQuickPick<Item>()
             picker.placeholder = 'Type a file path or node module name'
-            picker.items = quickItems
+            picker.items = items
             picker.matchOnDescription = true
-            /* picker.onDidChangeValue(() => {
-                if (picker.value.length > 0 && picker.items !== totalItems) {
-                    picker.items = totalItems
-                }
-
-                if (picker.value.length === 0 && picker.items !== quickItems) {
-                    picker.items = quickItems
-                }
-            }) */
             picker.onDidAccept(async () => {
                 picker.hide()
 
@@ -104,8 +88,6 @@ export function activate(context: vscode.ExtensionContext) {
                 if (!selectedItem) {
                     return null
                 }
-
-                localStorage.recentSelectedItems.markAsRecentlyUsed(language, selectedItem)
 
                 // Insert the snippet
                 await selectedItem.addImport(editor)
@@ -180,6 +162,4 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
     languages.forEach(language => language.reset())
     fileWatch.dispose()
-
-    localStorage.save()
 }
