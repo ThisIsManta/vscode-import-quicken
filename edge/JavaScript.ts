@@ -98,7 +98,7 @@ export default class JavaScript implements Language {
 					.reject(name => name.startsWith('@types/'))
 					.map(name => new NodeItem(name, getLocalModuleVersion(name, nodeModulePathList), this))
 					.concat(nodeJsAPIs)
-					.sortBy(item => item.name)
+					.sortBy(item => item.label)
 					.value()
 			)
 		}
@@ -776,26 +776,27 @@ class NodeItem implements Item {
 	readonly id: string
 	readonly label: string
 	readonly description: string
-	readonly name: string
 	readonly path: string
 
 	constructor(name: string, version: string, language: JavaScript) {
 		this.id = 'node://' + name
 		this.label = name
 		this.description = version ? 'v' + version : ''
-		this.name = getVariableName(name, null, language.options)
 		this.path = name
 		this.language = language
 	}
 
 	async addImport(editor: vscode.TextEditor) {
-		const options = this.language.options
 		const document = editor.document
 
 		const importDefaultIsPreferred = await this.language.checkIfImportDefaultIsPreferredOverNamespace()
 		const typeDefinitions = await this.getTypeDefinitions(document)
 
 		const codeTree = JavaScript.parse(document)
+
+		const moduleName = await guessModuleImport(this.path, codeTree) ||
+			_.words(_.last(this.path.split('/'))).map(_.upperFirst).join('')
+
 		const existingImports = getExistingImports(codeTree)
 		const duplicateImport = existingImports.find(item => item.path === this.path)
 		if (duplicateImport) {
@@ -831,7 +832,7 @@ class NodeItem implements Item {
 				} else if (duplicateImport.node.importClause.namedBindings && ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 					// Try merging `default` with `{ named }`
 					const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
-					await editor.edit(worker => worker.insert(position, this.name + ', '))
+					await editor.edit(worker => worker.insert(position, moduleName + ', '))
 					await JavaScript.fixESLint()
 					return null
 				}
@@ -872,9 +873,9 @@ class NodeItem implements Item {
 		let importClause: string
 		if (typeDefinitions.length === 0) {
 			if (importDefaultIsPreferred) {
-				importClause = this.name
+				importClause = moduleName
 			} else {
-				importClause = `* as ${this.name}`
+				importClause = `* as ${moduleName}`
 			}
 
 		} else {
@@ -886,15 +887,15 @@ class NodeItem implements Item {
 				return null
 			}
 			if (select === 'default') {
-				importClause = this.name
+				importClause = moduleName
 			} else if (select === '*') {
-				importClause = `* as ${this.name}`
+				importClause = `* as ${moduleName}`
 			} else {
 				importClause = '{ ' + select + ' }'
 			}
 		}
 
-		const snippet = await getImportOrRequireSnippet(this.name, importClause, this.path, codeTree, document)
+		const snippet = await getImportOrRequireSnippet(moduleName, importClause, this.path, codeTree, document)
 		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, this.path, document), snippet))
 		await JavaScript.fixESLint()
 	}
@@ -1052,41 +1053,6 @@ async function insertNamedImportToExistingImports(name: string, existingImports:
 	await editor.edit(worker => worker.insert(position, separator + name))
 }
 
-function getVariableName(name: string, path: string, options: LanguageOptions) {
-	const rules = _.toPairs(options.predefinedVariableNames)
-		.map((pair: Array<string>) => ({
-			inputPattern: new RegExp(pair[0]),
-			output: pair[1],
-		}))
-	for (let rule of rules) {
-		if (rule.inputPattern.test(name)) {
-			return name.replace(rule.inputPattern, rule.output)
-		}
-		if (path && rule.inputPattern.test(path)) {
-			return path.replace(rule.inputPattern, rule.output)
-		}
-	}
-
-	// Strip starting digits
-	name = name.replace(/^\d+/, '')
-
-	if (options.variableNamingConvention === 'camelCase') {
-		return _.camelCase(name)
-
-	} else if (options.variableNamingConvention === 'PascalCase') {
-		return _.words(name).map(_.upperFirst).join('')
-
-	} else if (options.variableNamingConvention === 'snake_case') {
-		return _.snakeCase(name)
-
-	} else if (options.variableNamingConvention === 'lowercase') {
-		return _.words(name).join('').toLowerCase()
-
-	} else {
-		return name.match(/[a-z_$1-9]/gi).join('')
-	}
-}
-
 async function matchNearbyFiles<T>(filePath: string, matcher: (codeTree: ts.SourceFile, stopPropagation?: boolean) => Promise<T>, defaultValue: T): Promise<T> {
 	const workingDocumentLink = vscode.Uri.file(filePath)
 	const workspaceDirectory = vscode.workspace.getWorkspaceFolder(workingDocumentLink).uri.fsPath
@@ -1095,7 +1061,7 @@ async function matchNearbyFiles<T>(filePath: string, matcher: (codeTree: ts.Sour
 	do {
 		workingDirectoryParts.pop() // Note that the first `pop()` is the file name itself
 
-		const fileLinks = await vscode.workspace.findFiles(fp.join(...workingDirectoryParts, '**', '*' + fp.extname(workingDocumentLink.fsPath)), null, 10)
+		const fileLinks = await vscode.workspace.findFiles(fp.join(...workingDirectoryParts, '**', '*.{js,jsx,ts,tsx}'), null, 2000)
 		for (const link of fileLinks) {
 			if (link.fsPath === workingDocumentLink.fsPath) {
 				continue
@@ -1176,19 +1142,37 @@ async function guessNamespaceFileImport(fullPath: string, codeTree: ts.SourceFil
 	return matchNearbyFiles(codeTree.fileName, (...args) => guessDefaultFileImport(fullPath, ...args), null)
 }
 
-/* async function guessNamedModuleImport(moduleName: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<{ name: string, kind: 'default' | 'namespace' | 'named' }> {
+async function guessModuleImport(moduleName: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
 	const existingImports = getExistingImports(codeTree)
 	const matchingImport = existingImports.find(stub => stub.path === moduleName)
 	if (matchingImport) {
-		return { name: matchingImport.name }
+		const { node } = matchingImport
+
+		if (
+			ts.isImportDeclaration(node) &&
+			node.importClause &&
+			node.importClause.name &&
+			ts.isIdentifier(node.importClause.name)
+		) {
+			return node.importClause.name.text
+		}
+
+		if (
+			ts.isImportDeclaration(node) &&
+			node.importClause &&
+			node.importClause.namedBindings &&
+			ts.isNamespaceImport(node.importClause.namedBindings)
+		) {
+			return node.importClause.namedBindings.name.text
+		}
 	}
 
 	if (stopPropagation) {
 		return null
 	}
 
-	return matchNearbyFiles(codeTree.fileName, (...args) => guessNamedModuleImport(moduleName, ...args), '')
-} */
+	return matchNearbyFiles(codeTree.fileName, (...args) => guessModuleImport(moduleName, ...args), null)
+}
 
 async function guessIndexFileExclusion(indexFileInfo: FileInfo, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<boolean> {
 	const existingImports = getExistingImports(codeTree)
