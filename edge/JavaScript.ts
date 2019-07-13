@@ -1618,7 +1618,10 @@ const createFindClosestPackageJson = _.memoize(async () => {
 		.orderBy(({ packageJsonPath }) => fp.dirname(packageJsonPath).split(fp.sep).length, 'desc')
 		.value()
 
-	return (filePath: string): (typeof list)[0] => list.find(({ packageJsonPath }) => (fp.dirname(packageJsonPath) + fp.sep).startsWith(filePath))
+	return (filePath: string): (typeof list)[0] =>
+		list.find(({ packageJsonPath }) =>
+			filePath.startsWith(fp.dirname(packageJsonPath) + fp.sep)
+		)
 })
 
 // Copy from https://github.com/ThisIsManta/vscode-package-watch/blob/master/edge/extension.ts
