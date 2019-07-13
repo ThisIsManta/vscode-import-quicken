@@ -1124,9 +1124,7 @@ async function guessNamespaceFileImport(fullPath: string, codeTree: ts.SourceFil
 			}
 		})
 		.compact()
-		.find(({ path }) =>
-			fullPath === getFilePath([fp.dirname(codeTree.fileName), path], _.trimStart(fp.extname(fullPath), '.'))
-		)
+		.find(({ path }) => fullPath === getFilePath([fp.dirname(codeTree.fileName), path], fp.extname(fullPath).replace(/^\./, '')))
 		.value()
 	if (matchingImport) {
 		return matchingImport.name
@@ -1136,7 +1134,7 @@ async function guessNamespaceFileImport(fullPath: string, codeTree: ts.SourceFil
 		return null
 	}
 
-	return matchNearbyFiles(codeTree.fileName, (...args) => guessDefaultFileImport(fullPath, ...args), null)
+	return matchNearbyFiles(codeTree.fileName, (...args) => guessNamespaceFileImport(fullPath, ...args), null)
 }
 
 async function guessModuleImport(moduleName: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
