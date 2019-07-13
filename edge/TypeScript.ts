@@ -35,7 +35,7 @@ export default class TypeScript extends JavaScript {
 		return _.get<boolean>(tsConfig, 'compilerOptions.allowJs', false)
 	}
 
-	protected async createFileFilter() {
+	protected async createLanguageSpecificFileFilter() {
 		if (await this.checkIfAllowJs()) {
 			return () => true
 

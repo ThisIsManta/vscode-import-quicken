@@ -1,3 +1,4 @@
+import * as fs from 'fs'
 import * as fp from 'path'
 import * as _ from 'lodash'
 import * as vscode from 'vscode'
@@ -23,7 +24,7 @@ export interface Language {
 
 export interface Item extends vscode.QuickPickItem {
 	id: string
-	addImport(editor: vscode.TextEditor): Promise<null | undefined>
+	addImport(editor: vscode.TextEditor): Promise<null | undefined | void>
 }
 
 // TODO: remove this

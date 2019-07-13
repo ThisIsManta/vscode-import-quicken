@@ -14,10 +14,11 @@ export interface JavaScriptConfigurations {
 
 const SUPPORTED_EXTENSION = /\.(j|t)sx?$/i
 
+type PackageJsonPath = string
+
 export default class JavaScript implements Language {
 	private fileItemCache: Array<FileItem>
-	private identifierCache = new Map<string, IdentifierMap>()
-	private nodeItemCache = new Map<string, Array<NodeItem>>()
+	private nodeItemCache = new Map<PackageJsonPath, Array<NodeItem>>()
 	private ultimateCache: Array<Item>
 
 	public configs: JavaScriptConfigurations
@@ -50,21 +51,24 @@ export default class JavaScript implements Language {
 		if (!this.fileItemCache) {
 			const fileExclusionList = this.configs.exclude.map(pattern => new RegExp(pattern))
 
-			const fileLinks = await vscode.workspace.findFiles('**/*')
-
 			const rootPath = vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath
 
-			this.fileItemCache = _.chain(fileLinks)
-				.filter(await this.createFileFilter())
-				.reject(fileLink => fileExclusionList.some(pattern =>
-					pattern.test(_.trimStart(fileLink.fsPath.substring(rootPath.length), fp.sep)))
+			const fileLinks = _.chain(await vscode.workspace.findFiles('**/*'))
+				.filter(await this.createLanguageSpecificFileFilter())
+				.reject(link => fileExclusionList.some(pattern =>
+					pattern.test(_.trimStart(link.fsPath.substring(rootPath.length), fp.sep)))
 				)
-				.map(fileLink => new FileItem(fileLink.fsPath, this.identifierCache))
-				.sortBy(file => file.info.fileNameWithExtension)
 				.value()
+
+			this.fileItemCache = []
+			const identifierCache = new Map<string, IdentifierMap>()
+			for (const link of fileLinks) {
+				this.fileItemCache.push(...await tryGetIdentifiers(link.fsPath, identifierCache))
+			}
 		}
 
-		const { packageJsonPath, nodeModulePathList } = (await createFindClosestPackageJson())(document.fileName)
+		const findClosestPackageJson = await createFindClosestPackageJson()
+		const { packageJsonPath, nodeModulePathList } = findClosestPackageJson(document.fileName)
 		if (packageJsonPath && this.nodeItemCache.has(packageJsonPath) === false) {
 			const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'))
 			const dependencies = _.chain([packageJson.devDependencies, packageJson.dependencies])
@@ -75,7 +79,8 @@ export default class JavaScript implements Language {
 			let nodeJsAPIs: Array<NodeItem> = []
 			if (dependencies.some(name => name === '@types/node')) {
 				const nodeJsVersion = getLocalModuleVersion('@types/node', nodeModulePathList)
-				nodeJsAPIs = getNodeJsAPIs(nodeModulePathList).map(name => new NodeItem(name, nodeJsVersion, this))
+				nodeJsAPIs = getNodeJsAPIs(nodeModulePathList)
+					.map(name => new NodeItem(name, nodeJsVersion, this))
 			}
 
 			this.nodeItemCache.set(
@@ -91,9 +96,10 @@ export default class JavaScript implements Language {
 
 		if (!this.ultimateCache) {
 			this.ultimateCache = [
-				..._.chain(this.fileItemCache)
-					.flatMap(file => file.identifiers)
-					.value(),
+				..._.sortBy(this.fileItemCache,
+					item => item.info.fileNameWithExtension,
+					item => item instanceof IdentifierItem ? item.name.toLowerCase() : '',
+				),
 				...(this.nodeItemCache.get(packageJsonPath) || [])
 			]
 		}
@@ -101,9 +107,9 @@ export default class JavaScript implements Language {
 		return this.ultimateCache
 	}
 
-	addItem(filePath: string) {
+	async addItem(filePath: string) {
 		if (this.fileItemCache) {
-			this.fileItemCache.push(new FileItem(filePath, this.identifierCache))
+			this.fileItemCache.push(...await tryGetIdentifiers(filePath))
 		}
 
 		if (this.ultimateCache) {
@@ -112,16 +118,9 @@ export default class JavaScript implements Language {
 	}
 
 	cutItem(filePath: string) {
-		if (this.identifierCache) {
-			this.identifierCache.delete(filePath)
-		}
-
+		const fileInfo = new FileInfo(filePath)
 		if (this.fileItemCache) {
-			const fileInfo = new FileInfo(filePath)
-			const index = this.fileItemCache.findIndex(item => item.info.fullPath === fileInfo.fullPath)
-			if (index >= 0) {
-				this.fileItemCache.splice(index, 1)
-			}
+			this.fileItemCache = this.fileItemCache.filter(file => file.info.fullPath !== fileInfo.fullPath)
 		}
 
 		if (this.ultimateCache) {
@@ -275,7 +274,7 @@ export default class JavaScript implements Language {
 		this.nodeItemCache.clear()
 	}
 
-	protected async createFileFilter() {
+	protected async createLanguageSpecificFileFilter() {
 		return (link: vscode.Uri) => true
 	}
 
@@ -381,7 +380,7 @@ export default class JavaScript implements Language {
 							continue
 						}
 
-						const identifiers = getExportedIdentifiers(fullPath)
+						const identifiers = await getExportedIdentifiers(fullPath)
 						if (identifiers.has('*default') === false) {
 							moduleName = '* as ' + moduleName
 						}
@@ -411,20 +410,68 @@ export default class JavaScript implements Language {
 	}
 }
 
-class FileItem {
-	readonly info: FileInfo
-	readonly identifiers: Array<IdentifierItem>
-
-	constructor(filePath: string, cache: Map<string, IdentifierMap>) {
-		this.info = new FileInfo(filePath)
-
-		this.identifiers = _.chain(Array.from(getExportedIdentifiers(this.info.fullPath, cache)))
-			.map(([name, { text }]) => new IdentifierItem(name, text, this, cache))
+async function tryGetIdentifiers(filePath: string, cache?: Map<string, IdentifierMap>) {
+	if (SUPPORTED_EXTENSION.test(filePath)) {
+		const identifiers = Array.from(await getExportedIdentifiers(filePath, cache))
+		return _.chain(identifiers)
+			.map(([name, { text }]) => new IdentifierItem(filePath, name, text))
 			.sortBy(
-				(identifier) => identifier.defaultExported ? 0 : 1,
+				identifier => identifier.defaultExported ? 0 : 1,
 				identifier => identifier.name.toLowerCase()
 			)
 			.value()
+	}
+
+	return [new FileItem(filePath)]
+}
+
+
+class FileItem implements Item {
+	readonly id: string;
+	label: string;
+	description: string;
+	readonly info: FileInfo
+
+	constructor(filePath: string) {
+		this.id = filePath
+
+		this.info = new FileInfo(filePath)
+
+		this.label = this.info.fileNameWithExtension
+
+		const workspaceDirectory = vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri).uri.fsPath
+		this.description = _.trim(this.info.fullPath.substring(workspaceDirectory.length), fp.sep)
+	}
+
+	async addImport(editor: vscode.TextEditor) {
+		const document = editor.document
+
+		const codeTree = await JavaScript.parse(document)
+
+		const path = await this.getRelativePath(codeTree, document)
+
+		if (/^(css|less|sass|scss|styl)$/.test(this.info.fileExtensionWithoutLeadingDot)) {
+			const existingImports = getExistingImports(codeTree)
+
+			const duplicateImport = getDuplicateImport(existingImports, path)
+			if (duplicateImport) {
+				vscode.window.showErrorMessage(`The module "${this.label}" has been already imported.`, { modal: true })
+				focusAt(duplicateImport.node, document)
+				return null
+			}
+
+			const snippet = await getImportOrRequireSnippet(null, null, path, codeTree, document)
+			await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
+			await JavaScript.fixESLint()
+			return null
+		}
+
+		const autoName = _.words(this.info.fileNameWithoutExtension.replace(/\..+/g, '')).join('')
+
+		const identifierOnlyForJsonFile = this.info.fileExtensionWithoutLeadingDot === 'json' ? autoName : null
+		const snippet = await getImportOrRequireSnippet(identifierOnlyForJsonFile, null, path, codeTree, document, true)
+		await editor.edit(worker => worker.insert(vscode.window.activeTextEditor.selection.active, snippet))
+		await JavaScript.fixESLint()
 	}
 
 	async getRelativePath(codeTree: ts.SourceFile, document: vscode.TextDocument) {
@@ -445,57 +492,47 @@ class FileItem {
 	}
 }
 
-class IdentifierItem implements Item {
+class IdentifierItem extends FileItem {
 	readonly id: string
 	label: string
-	description?: string
+	description: string
 	detail: string
 
-	private file: FileItem
-	private cache: Map<string, IdentifierMap>
 	readonly name: string
 	readonly defaultExported: boolean
-	readonly sortingKey: string
 
-	constructor(name: string, text: string, file: FileItem, cache: Map<string, IdentifierMap>) {
-		this.id = file.info.fullPath + '::' + name
+	constructor(filePath: string, name: string, text: string) {
+		super(filePath)
 
-		this.file = file
-
-		this.cache = cache
+		this.id = filePath + '::' + name
 
 		this.name = name
 
 		this.defaultExported = name === '*default'
 
-		this.label = this.defaultExported
-			? file.info.fileNameWithExtension
-			: name
-
-		const workspaceDirectory = vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri).uri.fsPath
-		this.description = _.trim(file.info.fullPath.substring(workspaceDirectory.length), fp.sep)
+		if (!this.defaultExported) {
+			this.label = name
+		}
 
 		this.detail = _.truncate(text, { length: 120, omission: '...' })
-
-		this.sortingKey = name.toLowerCase()
 	}
 
 	async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument) {
-		const indexFilePath = getFilePath([this.file.info.directoryPath, 'index'], this.file.info.fileExtensionWithoutLeadingDot)
+		const indexFilePath = getFilePath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
 
 		const autoName = _.words(this.label.replace(/\..+/g, '')).join('')
 
 		// Try to import from the closest index file
-		if (indexFilePath && this.file.info.fullPath !== indexFilePath) {
-			const indexFile = new FileItem(indexFilePath, this.cache)
+		if (indexFilePath && this.info.fullPath !== indexFilePath) {
+			const indexFile = new FileItem(indexFilePath)
 			const existingImports = getExistingImports(codeTree)
 			const exportedIdentifiersFromIndexFile = getExportedIdentifiers(indexFilePath)
 			for (const [name, { pathList }] of exportedIdentifiersFromIndexFile) {
-				if (name === this.name && pathList.indexOf(this.file.info.fullPath) >= 0) {
+				if (name === this.name && pathList.indexOf(this.info.fullPath) >= 0) {
 					// Stop processing if there is `import * as name from "path"`
 					const duplicateImportForIndexFile = existingImports.find(stub =>
 						getFilePath(
-							[fp.dirname(indexFilePath), stub.path], this.file.info.fileExtensionWithoutLeadingDot
+							[fp.dirname(indexFilePath), stub.path], this.info.fileExtensionWithoutLeadingDot
 						) === indexFilePath)
 					const duplicateImportHasImportedEverything = (
 						duplicateImportForIndexFile &&
@@ -542,10 +579,10 @@ class IdentifierItem implements Item {
 			}
 		}
 
-		const path = await this.file.getRelativePath(codeTree, document)
+		const path = await this.getRelativePath(codeTree, document)
 
 		if (this.defaultExported) {
-			const name = await guessDefaultFileImport(this.file.info.fullPath, codeTree) || autoName
+			const name = await guessDefaultFileImport(this.info.fullPath, codeTree) || autoName
 			return {
 				name,
 				importClause: name,
@@ -554,7 +591,7 @@ class IdentifierItem implements Item {
 			}
 		}
 
-		const namespace = await guessNamespaceFileImport(this.file.info.fullPath, codeTree)
+		const namespace = await guessNamespaceFileImport(this.info.fullPath, codeTree)
 		if (namespace) {
 			return {
 				name: namespace,
@@ -580,180 +617,154 @@ class IdentifierItem implements Item {
 
 		const existingImports = getExistingImports(codeTree)
 
-		if (SUPPORTED_EXTENSION.test(this.file.info.fileNameWithExtension)) {
-			const { name, importClause, kind, path } = await this.getImportPattern(codeTree, document)
+		const { name, importClause, kind, path } = await this.getImportPattern(codeTree, document)
 
-			const duplicateImport = getDuplicateImport(existingImports, path)
-			if (duplicateImport) {
-				// Try merging the given named import with the existing imports
-				if (ts.isImportDeclaration(duplicateImport.node) && duplicateImport.node.importClause) {
-					// There are 9 cases as a product of 3 by 3 cases:
-					// 1) `import default from "path"`
-					// 2) `import * as namespace from "path"`
-					// 3) `import { named } from "path"`
+		const duplicateImport = getDuplicateImport(existingImports, path)
+		if (duplicateImport) {
+			// Try merging the given named import with the existing imports
+			if (ts.isImportDeclaration(duplicateImport.node) && duplicateImport.node.importClause) {
+				// There are 9 cases as a product of 3 by 3 cases:
+				// 1) `import default from "path"`
+				// 2) `import * as namespace from "path"`
+				// 3) `import { named } from "path"`
 
-					if (kind === 'namespace') {
-						if (duplicateImport.node.importClause.namedBindings) {
-							// Try merging `* as namespace` with `* as namespace`
-							// Try merging `* as namespace` with `{ named }`
-							vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
-							focusAt(duplicateImport.node.importClause.namedBindings, document)
-							return null
+				if (kind === 'namespace') {
+					if (duplicateImport.node.importClause.namedBindings) {
+						// Try merging `* as namespace` with `* as namespace`
+						// Try merging `* as namespace` with `{ named }`
+						vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
+						focusAt(duplicateImport.node.importClause.namedBindings, document)
+						return null
 
-						} else {
-							// Try merging `* as namespace` with `default`
-							let givenName = name
-							if (duplicateImport.node.importClause.name.text === name) {
-								const conflictedIdentifierNode = duplicateImport.node.importClause.name
-								const options = [
-									{
-										title: 'Rename The Default',
-										action: async () => {
-											// Do not `await` here because it does not work anyway
-											vscode.commands.executeCommand('editor.action.rename', [document.uri, document.positionAt(conflictedIdentifierNode.getStart())])
-											return name
-										}
-									},
-									{
-										title: 'Name The Namespace',
-										action: async () => {
-											return await vscode.window.showInputBox({
-												ignoreFocusOut: true,
-												value: name,
-												validateInput: inputText => validJavaScriptIdentifier.test(inputText) ? null : 'Not a valid JavaScript identifier.',
-											})
-										}
+					} else {
+						// Try merging `* as namespace` with `default`
+						let givenName = name
+						if (duplicateImport.node.importClause.name.text === name) {
+							const conflictedIdentifierNode = duplicateImport.node.importClause.name
+							const options = [
+								{
+									title: 'Rename The Default',
+									action: async () => {
+										// Do not `await` here because it does not work anyway
+										vscode.commands.executeCommand('editor.action.rename', [document.uri, document.positionAt(conflictedIdentifierNode.getStart())])
+										return name
 									}
-								]
-								const selectedOption = await vscode.window.showWarningMessage(`The identifier "${name}" has been used.`, { modal: true }, ...options)
-								if (!selectedOption) {
-									return null
+								},
+								{
+									title: 'Name The Namespace',
+									action: async () => {
+										return await vscode.window.showInputBox({
+											ignoreFocusOut: true,
+											value: name,
+											validateInput: inputText => validJavaScriptIdentifier.test(inputText) ? null : 'Not a valid JavaScript identifier.',
+										})
+									}
 								}
-								givenName = await selectedOption.action()
-								if (!givenName) {
-									return null
-								}
-							}
-
-							const position = document.positionAt(duplicateImport.node.importClause.name.getEnd())
-							await editor.edit(worker => worker.insert(position, ', * as ' + givenName))
-							await JavaScript.fixESLint()
-							return null
-						}
-
-					} else if (kind === 'named') {
-						if (ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)) {
-							// Try merging `{ named }` with `* as namespace`
-							const namespaceImport = duplicateImport.node.importClause.namedBindings
-							vscode.window.showErrorMessage(`The module "${path}" has been already imported as "${namespaceImport.name.text}".`, { modal: true })
-							focusAt(namespaceImport, document)
-							return null
-
-						} else if (duplicateImport.node.importClause.name) {
-							// Try merging `{ named }` with `default`
-							const position = document.positionAt(duplicateImport.node.importClause.name.getEnd())
-							await editor.edit(worker => worker.insert(position, ', { ' + name + ' }'))
-							await JavaScript.fixESLint()
-							return null
-
-						} else if (ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
-							// Try merging `{ named }` with `{ named }`
-							if (duplicateImport.node.importClause.namedBindings.elements.some(node => node.name.text === name)) {
-								vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
-								focusAt(duplicateImport.node, document)
+							]
+							const selectedOption = await vscode.window.showWarningMessage(`The identifier "${name}" has been used.`, { modal: true }, ...options)
+							if (!selectedOption) {
 								return null
-
-							} else {
-								if (duplicateImport.node.importClause.namedBindings.elements.length > 0) {
-									await insertNamedImportToExistingImports(name, duplicateImport.node.importClause.namedBindings.elements, editor)
-									await JavaScript.fixESLint()
-									return null
-
-								} else {
-									// Try merging `{ named }` with `{ }`
-									const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getEnd() - 1)
-									await editor.edit(worker => worker.insert(position, name))
-									await JavaScript.fixESLint()
-									return null
-								}
+							}
+							givenName = await selectedOption.action()
+							if (!givenName) {
+								return null
 							}
 						}
 
-					} else if (kind === 'default') { // In case of `import default from "path"`
-						if (duplicateImport.node.importClause.name) {
-							// Try merging `default` with `default`
+						const position = document.positionAt(duplicateImport.node.importClause.name.getEnd())
+						await editor.edit(worker => worker.insert(position, ', * as ' + givenName))
+						await JavaScript.fixESLint()
+						return null
+					}
+
+				} else if (kind === 'named') {
+					if (ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)) {
+						// Try merging `{ named }` with `* as namespace`
+						const namespaceImport = duplicateImport.node.importClause.namedBindings
+						vscode.window.showErrorMessage(`The module "${path}" has been already imported as "${namespaceImport.name.text}".`, { modal: true })
+						focusAt(namespaceImport, document)
+						return null
+
+					} else if (duplicateImport.node.importClause.name) {
+						// Try merging `{ named }` with `default`
+						const position = document.positionAt(duplicateImport.node.importClause.name.getEnd())
+						await editor.edit(worker => worker.insert(position, ', { ' + name + ' }'))
+						await JavaScript.fixESLint()
+						return null
+
+					} else if (ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
+						// Try merging `{ named }` with `{ named }`
+						if (duplicateImport.node.importClause.namedBindings.elements.some(node => node.name.text === name)) {
 							vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
 							focusAt(duplicateImport.node, document)
 							return null
 
-						} else if (ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)) {
-							// Try merging `default` with `* as namespace`
-							let givenName = name
-							if (duplicateImport.node.importClause.namedBindings.name.text === name) {
-								// Cannot have a rename option here because of adding the identifier at the left side of the renaming position
-								givenName = await await vscode.window.showInputBox({
-									ignoreFocusOut: true,
-									value: name,
-									validateInput: inputText => validJavaScriptIdentifier.test(inputText) ? null : 'Not a valid JavaScript identifier.',
-								})
-								if (!givenName) {
-									return null
-								}
-							}
-
-							const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
-							await editor.edit(worker => worker.insert(position, givenName + ', '))
-							await JavaScript.fixESLint()
-							return null
-
 						} else {
-							// Try merging `default` with `{ named }`
-							const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
-							await editor.edit(worker => worker.insert(position, name + ', '))
-							await JavaScript.fixESLint()
-							return null
+							if (duplicateImport.node.importClause.namedBindings.elements.length > 0) {
+								await insertNamedImportToExistingImports(name, duplicateImport.node.importClause.namedBindings.elements, editor)
+								await JavaScript.fixESLint()
+								return null
+
+							} else {
+								// Try merging `{ named }` with `{ }`
+								const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getEnd() - 1)
+								await editor.edit(worker => worker.insert(position, name))
+								await JavaScript.fixESLint()
+								return null
+							}
+						}
+					}
+
+				} else if (kind === 'default') { // In case of `import default from "path"`
+					if (duplicateImport.node.importClause.name) {
+						// Try merging `default` with `default`
+						vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
+						focusAt(duplicateImport.node, document)
+						return null
+
+					} else if (ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)) {
+						// Try merging `default` with `* as namespace`
+						let givenName = name
+						if (duplicateImport.node.importClause.namedBindings.name.text === name) {
+							// Cannot have a rename option here because of adding the identifier at the left side of the renaming position
+							givenName = await await vscode.window.showInputBox({
+								ignoreFocusOut: true,
+								value: name,
+								validateInput: inputText => validJavaScriptIdentifier.test(inputText) ? null : 'Not a valid JavaScript identifier.',
+							})
+							if (!givenName) {
+								return null
+							}
 						}
 
+						const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
+						await editor.edit(worker => worker.insert(position, givenName + ', '))
+						await JavaScript.fixESLint()
+						return null
+
 					} else {
-						// In case of an invalid state
+						// Try merging `default` with `{ named }`
+						const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
+						await editor.edit(worker => worker.insert(position, name + ', '))
+						await JavaScript.fixESLint()
 						return null
 					}
 
 				} else {
-					vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
-					focusAt(duplicateImport.node, document)
+					// In case of an invalid state
 					return null
 				}
-			}
 
-			const snippet = await getImportOrRequireSnippet(name, importClause, path, codeTree, document)
-			await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
-			await JavaScript.fixESLint()
-			return null
-
-		} else if (/^(css|less|sass|scss|styl)$/.test(this.file.info.fileExtensionWithoutLeadingDot)) {
-			const path = await this.file.getRelativePath(codeTree, document)
-
-			const duplicateImport = getDuplicateImport(existingImports, path)
-			if (duplicateImport) {
-				vscode.window.showErrorMessage(`The module "${this.label}" has been already imported.`, { modal: true })
+			} else {
+				vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
 				focusAt(duplicateImport.node, document)
 				return null
 			}
-
-			const snippet = await getImportOrRequireSnippet(null, null, path, codeTree, document)
-			await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
-			await JavaScript.fixESLint()
-			return null
-
-		} else { // In case of other file types
-			const path = await this.file.getRelativePath(codeTree, document)
-			const identifierOnlyForJsonFile = this.file.info.fileExtensionWithoutLeadingDot === 'json' ? this.name : null
-			const snippet = await getImportOrRequireSnippet(identifierOnlyForJsonFile, null, path, codeTree, document, true)
-			await editor.edit(worker => worker.insert(vscode.window.activeTextEditor.selection.active, snippet))
-			await JavaScript.fixESLint()
-			return null
 		}
+
+		const snippet = await getImportOrRequireSnippet(name, importClause, path, codeTree, document)
+		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
+		await JavaScript.fixESLint()
 	}
 }
 
@@ -966,7 +977,7 @@ interface ImportStatementForReadOnly {
 }
 
 function getExistingImports(codeTree: ts.SourceFile) {
-	const imports: ImportStatementForReadOnly[] = []
+	const imports: Array<ImportStatementForReadOnly> = []
 
 	codeTree.forEachChild(node => {
 		if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
