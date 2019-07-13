@@ -10,11 +10,11 @@ const JAVASCRIPT_EXTENSION = /\.jsx?$/i
 const TYPESCRIPT_EXTENSION = /\.tsx?$/i
 
 export default class TypeScript extends JavaScript {
-	constructor(extensionLevelConfig: ExtensionLevelConfigurations, fileWatch: vscode.FileSystemWatcher) {
+	constructor(extensionLevelConfig: ExtensionLevelConfigurations) {
 		super({
 			...extensionLevelConfig,
 			javascript: extensionLevelConfig.typescript
-		}, fileWatch)
+		})
 	}
 
 	async getCompatibleFileExtensions() {

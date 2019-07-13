@@ -7,38 +7,70 @@ import TypeScript from './TypeScript'
 import Stylus from './Stylus'
 
 let languages: Array<Language>
-let fileWatch: vscode.FileSystemWatcher
 
 export function activate(context: vscode.ExtensionContext) {
-    fileWatch = vscode.workspace.createFileSystemWatcher('**/*')
+    const fileWatch = vscode.workspace.createFileSystemWatcher('**/*')
+    context.subscriptions.push(fileWatch)
     fileWatch.onDidCreate(e => {
-        languages.forEach(language => {
+        for (const language of languages) {
             language.addItem ? language.addItem(e.fsPath) : language.reset()
-        })
+        }
     })
     fileWatch.onDidDelete(e => {
-        languages.forEach(language => {
+        for (const language of languages) {
             language.cutItem ? language.cutItem(e.fsPath) : language.reset()
-        })
+        }
     })
+    const fileChangePathList = new Set<string>()
+    const propagateFileChange = _.debounce(() => {
+        for (const filePath of Array.from(fileChangePathList)) {
+            if (vscode.window.activeTextEditor && filePath === vscode.window.activeTextEditor.document.uri.fsPath) {
+                continue
+            }
+
+            for (const language of languages) {
+                language.cutItem ? language.cutItem(filePath) : language.reset()
+                language.addItem ? language.addItem(filePath) : language.reset()
+            }
+
+            fileChangePathList.delete(filePath)
+        }
+    }, 1500)
+    fileWatch.onDidChange(e => {
+        fileChangePathList.add(e.fsPath)
+        propagateFileChange()
+    })
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(propagateFileChange))
 
     let config: ExtensionLevelConfigurations
+    let extensionIsInitializing = true
     function initialize() {
         config = vscode.workspace.getConfiguration().get<ExtensionLevelConfigurations>('importQuicken')
 
         if (languages) {
-            languages.forEach(language => language.reset())
+            for (const language of languages) {
+                language.reset()
+            }
         }
 
         languages = [
             // Add new supported languages here
-            new TypeScript(config, fileWatch),
-            new JavaScript(config, fileWatch),
+            new TypeScript(config),
+            new JavaScript(config),
             new Stylus(config),
         ]
+
+        vscode.window.withProgress({ title: 'Import Quicken is preparing files...', location: vscode.ProgressLocation.Window }, async () => {
+            for (const language of languages) {
+                if (language.setItems) {
+                    await language.setItems()
+                }
+            }
+            extensionIsInitializing = false
+        })
     }
     initialize()
-    vscode.workspace.onDidChangeConfiguration(initialize)
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(initialize))
 
     context.subscriptions.push(vscode.commands.registerCommand('importQuicken.addImport', async function () {
         const editor = vscode.window.activeTextEditor
@@ -50,13 +82,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Show the progress bar if the operation takes too long
-        let progressWillShow = true
-        let hideProgress = () => { progressWillShow = false }
+        let progressIsVisible = !extensionIsInitializing
+        let hideProgress = () => { progressIsVisible = false }
         setTimeout(() => {
-            if (!progressWillShow) {
+            if (!progressIsVisible) {
                 return
             }
-            vscode.window.withProgress({ title: 'Populating Files...', location: vscode.ProgressLocation.Window }, async () => {
+            vscode.window.withProgress({ title: 'Import Quicken is populating files...', location: vscode.ProgressLocation.Window }, async () => {
                 await new Promise(resolve => {
                     hideProgress = resolve
                 })
@@ -160,6 +192,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-    languages.forEach(language => language.reset())
-    fileWatch.dispose()
+    for (const language of languages) {
+        language.reset()
+    }
 }

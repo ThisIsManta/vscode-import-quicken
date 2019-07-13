@@ -1,4 +1,3 @@
-import * as fs from 'fs'
 import * as fp from 'path'
 import * as _ from 'lodash'
 import * as vscode from 'vscode'
@@ -14,6 +13,7 @@ export interface ExtensionLevelConfigurations {
 }
 
 export interface Language {
+	setItems?(): Promise<void>
 	getItems(document: vscode.TextDocument): Promise<Array<Item> | null>
 	addItem?(filePath: string): void
 	cutItem?(filePath: string): void
