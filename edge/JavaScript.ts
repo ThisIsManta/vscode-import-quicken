@@ -1058,7 +1058,7 @@ async function matchNearbyFiles<T>(filePath: string, matcher: (codeTree: ts.Sour
 	do {
 		workingDirectoryParts.pop() // Note that the first `pop()` is the file name itself
 
-		const fileLinks = await vscode.workspace.findFiles(fp.join(...workingDirectoryParts, '**', '*.{js,jsx,ts,tsx}'), null, 2000)
+		const fileLinks = await vscode.workspace.findFiles(fp.posix.join(...workingDirectoryParts, '**', '*.{js,jsx,ts,tsx}'), null, 2000)
 		for (const link of fileLinks) {
 			if (link.fsPath === workingDocumentLink.fsPath) {
 				continue
@@ -1171,13 +1171,17 @@ async function guessModuleImport(moduleName: string, codeTree: ts.SourceFile, st
 	return matchNearbyFiles(codeTree.fileName, (...args) => guessModuleImport(moduleName, ...args), null)
 }
 
+const indexFilePattern = /(\\|\/)index(\.\w+)?$/
+
 async function guessIndexFileExclusion(indexFileInfo: FileInfo, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<boolean> {
 	const existingImports = getExistingImports(codeTree)
-	const tester = new RegExp('(\\\\|\\/)index(\\.' + _.escapeRegExp(indexFileInfo.fileExtensionWithoutLeadingDot) + ')?$')
 	for (const { path } of existingImports) {
-		const fullPath = getFilePath([fp.dirname(codeTree.fileName), path], indexFileInfo.fileExtensionWithoutLeadingDot)
-		if (fullPath === indexFileInfo.fullPath) {
-			return !tester.test(path)
+		if (indexFileInfo.directoryPath === fp.resolve(fp.dirname(codeTree.fileName), path)) {
+			return true
+		}
+
+		if (indexFilePattern.test(path)) {
+			return false
 		}
 	}
 
