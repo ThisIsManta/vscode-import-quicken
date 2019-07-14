@@ -19,6 +19,8 @@ type PackageJsonPath = string
 export default class JavaScript implements Language {
 	private fileItemCache: Array<FileItem>
 	private nodeItemCache = new Map<PackageJsonPath, Array<NodeItem>>()
+	private defaultImportCache = new Map<FilePath, string>()
+	private namespaceImportCache = new Map<FilePath, string>()
 
 	public configs: JavaScriptConfigurations
 
@@ -32,6 +34,53 @@ export default class JavaScript implements Language {
 
 	async checkIfImportDefaultIsPreferredOverNamespace() {
 		return true
+	}
+
+	private async tryGetIdentifiers(filePath: string, identifierCache?: Map<FilePath, IdentifierMap>) {
+		if (SUPPORTED_EXTENSION.test(filePath)) {
+			const codeTree = JavaScript.parse(filePath)
+
+			this.setImportCache(codeTree)
+
+			const identifiers = Array.from(await getExportedIdentifiers(codeTree, identifierCache))
+			return _.chain(identifiers)
+				.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
+				.map(([name, { text }]) => new IdentifierItem(filePath, name, text, this.defaultImportCache, this.namespaceImportCache))
+				.sortBy(
+					identifier => identifier.defaultExported ? 0 : 1,
+					identifier => identifier.name.toLowerCase()
+				)
+				.value()
+		}
+
+		return [new FileItem(filePath)]
+	}
+
+	private setImportCache(codeTree: ts.SourceFile) {
+		if (!codeTree) {
+			return
+		}
+
+		const existingImports = getExistingImports(codeTree)
+		for (const { node, path } of existingImports) {
+			if (!ts.isImportDeclaration(node) || !node.importClause) {
+				continue
+			}
+
+			const moduleNameOrFilePath = /^\.\.?\//.test(path)
+				? tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
+				: path
+
+			if (node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) {
+				this.namespaceImportCache.set(moduleNameOrFilePath, node.importClause.namedBindings.name.text)
+				continue
+			}
+
+			if (node.importClause.name && ts.isIdentifier(node.importClause.name)) {
+				this.defaultImportCache.set(moduleNameOrFilePath, node.importClause.name.text)
+				continue
+			}
+		}
 	}
 
 	private workingThread: Promise<void>
@@ -56,7 +105,7 @@ export default class JavaScript implements Language {
 				this.fileItemCache = []
 				const identifierCache = new Map<FilePath, IdentifierMap>()
 				for (const link of fileLinks) {
-					this.fileItemCache.push(...await tryGetIdentifiers(link.fsPath, identifierCache))
+					this.fileItemCache.push(...await this.tryGetIdentifiers(link.fsPath, identifierCache))
 				}
 				this.fileItemCache = _.sortBy(this.fileItemCache,
 					item => item.info.fileNameWithExtension,
@@ -118,14 +167,14 @@ export default class JavaScript implements Language {
 
 	async addItem(filePath: string) {
 		if (this.fileItemCache) {
-			this.fileItemCache.push(...await tryGetIdentifiers(filePath))
+			this.fileItemCache.push(...await this.tryGetIdentifiers(filePath))
 		}
 
 		if (fp.basename(filePath) === 'package.json') {
 			await this.setItems()
 		}
 
-		setImportCache(JavaScript.parse(filePath))
+		this.setImportCache(JavaScript.parse(filePath))
 	}
 
 	cutItem(filePath: string) {
@@ -237,13 +286,13 @@ export default class JavaScript implements Language {
 			/* const matchingFullPaths = await item.search()
 			if (matchingFullPaths.length === 0) {
 				nonResolvableImports.push(item)
-
+	
 			} else if (matchingFullPaths.length === 1) {
 				await editor.edit(worker => {
 					const path = new FileItem(matchingFullPaths[0], rootPath, this).getRelativePath(document)
 					worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
 				})
-
+	
 			} else {
 				manualSolvableImports.push(item)
 			} */
@@ -283,8 +332,8 @@ export default class JavaScript implements Language {
 	reset() {
 		this.fileItemCache = null
 		this.nodeItemCache.clear()
-		namespaceImportCache.clear()
-		defaultImportCache.clear()
+		this.namespaceImportCache.clear()
+		this.defaultImportCache.clear()
 	}
 
 	protected async createLanguageSpecificFileFilter() {
@@ -423,27 +472,6 @@ export default class JavaScript implements Language {
 	}
 }
 
-async function tryGetIdentifiers(filePath: string, identifierCache?: Map<FilePath, IdentifierMap>) {
-	if (SUPPORTED_EXTENSION.test(filePath)) {
-		const codeTree = JavaScript.parse(filePath)
-
-		setImportCache(codeTree)
-
-		const identifiers = Array.from(await getExportedIdentifiers(codeTree, identifierCache))
-		return _.chain(identifiers)
-			.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
-			.map(([name, { text }]) => new IdentifierItem(filePath, name, text))
-			.sortBy(
-				identifier => identifier.defaultExported ? 0 : 1,
-				identifier => identifier.name.toLowerCase()
-			)
-			.value()
-	}
-
-	return [new FileItem(filePath)]
-}
-
-
 class FileItem implements Item {
 	readonly id: string;
 	label: string;
@@ -526,7 +554,10 @@ class IdentifierItem extends FileItem {
 	readonly name: string
 	readonly defaultExported: boolean
 
-	constructor(filePath: string, name: string, text: string) {
+	private defaultImportCache: Map<FilePath, string>
+	private namespaceImportCache: Map<FilePath, string>
+
+	constructor(filePath: string, name: string, text: string, defaultImportCache: Map<FilePath, string>, namespaceImportCache: Map<FilePath, string>) {
 		super(filePath)
 
 		this.id = filePath + '::' + name
@@ -540,6 +571,9 @@ class IdentifierItem extends FileItem {
 		}
 
 		this.detail = _.truncate(text, { length: 120, omission: '...' })
+
+		this.defaultImportCache = defaultImportCache
+		this.namespaceImportCache = namespaceImportCache
 	}
 
 	private async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument) {
@@ -575,7 +609,7 @@ class IdentifierItem extends FileItem {
 					const path = await indexFile.getRelativePath(codeTree, document)
 
 					if (this.defaultExported) {
-						const name = defaultImportCache.get(indexFile.info.fullPath) || autoName
+						const name = this.defaultImportCache.get(indexFile.info.fullPath) || autoName
 						return {
 							name,
 							importClause: name,
@@ -584,7 +618,7 @@ class IdentifierItem extends FileItem {
 						}
 					}
 
-					const namespace = namespaceImportCache.get(indexFile.info.fullPath)
+					const namespace = this.namespaceImportCache.get(indexFile.info.fullPath)
 					if (namespace) {
 						return {
 							name: namespace,
@@ -608,7 +642,7 @@ class IdentifierItem extends FileItem {
 		const path = await this.getRelativePath(codeTree, document)
 
 		if (this.defaultExported) {
-			const name = defaultImportCache.get(this.info.fullPath) || autoName
+			const name = this.defaultImportCache.get(this.info.fullPath) || autoName
 			return {
 				name,
 				importClause: name,
@@ -617,7 +651,7 @@ class IdentifierItem extends FileItem {
 			}
 		}
 
-		const namespace = namespaceImportCache.get(this.info.fullPath)
+		const namespace = this.namespaceImportCache.get(this.info.fullPath)
 		if (namespace) {
 			return {
 				name: namespace,
@@ -1108,36 +1142,6 @@ async function matchNearbyFiles<T>(filePath: string, matcher: (codeTree: ts.Sour
 	} while (workingDirectoryParts.length > 0)
 
 	return defaultValue
-}
-
-const defaultImportCache = new Map<FilePath, string>()
-const namespaceImportCache = new Map<FilePath, string>()
-
-function setImportCache(codeTree: ts.SourceFile) {
-	if (!codeTree) {
-		return
-	}
-
-	const existingImports = getExistingImports(codeTree)
-	for (const { node, path } of existingImports) {
-		if (!ts.isImportDeclaration(node) || !node.importClause) {
-			continue
-		}
-
-		const moduleNameOrFilePath = /^\.\.?\//.test(path)
-			? tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
-			: path
-
-		if (node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) {
-			namespaceImportCache.set(moduleNameOrFilePath, node.importClause.namedBindings.name.text)
-			continue
-		}
-
-		if (node.importClause.name && ts.isIdentifier(node.importClause.name)) {
-			defaultImportCache.set(moduleNameOrFilePath, node.importClause.name.text)
-			continue
-		}
-	}
 }
 
 async function guessModuleImport(moduleName: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {

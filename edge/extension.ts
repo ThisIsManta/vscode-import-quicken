@@ -45,6 +45,8 @@ export function activate(context: vscode.ExtensionContext) {
     let config: ExtensionLevelConfigurations
     let extensionIsInitializing = true
     function initialize() {
+        extensionIsInitializing = true
+
         config = vscode.workspace.getConfiguration().get<ExtensionLevelConfigurations>('importQuicken')
 
         if (languages) {
@@ -60,17 +62,23 @@ export function activate(context: vscode.ExtensionContext) {
             new Stylus(config),
         ]
 
-        vscode.window.withProgress({ title: 'Import Quicken is preparing files...', location: vscode.ProgressLocation.Window }, async () => {
-            for (const language of languages) {
-                if (language.setItems) {
-                    await language.setItems()
-                }
-            }
-            extensionIsInitializing = false
-        })
+        extensionIsInitializing = false
     }
     initialize()
-    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(initialize))
+
+    vscode.window.withProgress({ title: 'Import Quicken is preparing files...', location: vscode.ProgressLocation.Window }, () =>
+        Promise.all(_.compact(languages.map(language =>
+            language.setItems
+                ? language.setItems()
+                : null
+        )))
+    )
+
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(() => {
+        if (!extensionIsInitializing) {
+            initialize()
+        }
+    }))
 
     context.subscriptions.push(vscode.commands.registerCommand('importQuicken.addImport', async function () {
         const editor = vscode.window.activeTextEditor
