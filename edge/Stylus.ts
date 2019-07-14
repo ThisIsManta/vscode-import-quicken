@@ -98,7 +98,7 @@ export default class Stylus implements Language {
 		}
 
 		if (brokenImports.length === 0) {
-			vscode.window.setStatusBarMessage('Code Quicken: No broken import/require statements have been found.', 5000)
+			vscode.window.setStatusBarMessage('No broken import/require statements have been found.', 5000)
 			return null
 		}
 
@@ -147,10 +147,10 @@ export default class Stylus implements Language {
 		}
 
 		if (unsolvableImports.length === 0) {
-			vscode.window.setStatusBarMessage('Code Quicken: All broken import/require statements have been fixed.', 5000)
+			vscode.window.setStatusBarMessage('All broken import/require statements have been fixed.', 5000)
 
 		} else {
-			vscode.window.showWarningMessage(`Code Quicken: There ${unsolvableImports.length === 1 ? 'was' : 'were'} ${unsolvableImports.length} broken import/require statement${unsolvableImports.length === 1 ? '' : 's'} that had not been fixed.`)
+			vscode.window.showWarningMessage(`There ${unsolvableImports.length === 1 ? 'was' : 'were'} ${unsolvableImports.length} broken import/require statement${unsolvableImports.length === 1 ? '' : 's'} that had not been fixed.`)
 		}
 
 		return true

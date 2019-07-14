@@ -153,7 +153,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
         })
 
-        await vscode.window.withProgress({ title: 'Code Quicken: Fixing invalid import/require statements', location: vscode.ProgressLocation.Window }, async () => {
+        await vscode.window.withProgress({ title: 'Fixing invalid import/require statements', location: vscode.ProgressLocation.Window }, async () => {
             for (let lang of languages) {
                 if (lang.fixImport === undefined) {
                     continue
@@ -168,7 +168,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             // Show the error message if no languages can fix the imports
-            vscode.window.showErrorMessage('Code Quicken: The current language was not supported.')
+            vscode.window.showErrorMessage('The current language was not supported.')
         })
 
         editorChangeEvent.dispose()

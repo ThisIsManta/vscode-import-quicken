@@ -221,7 +221,7 @@ export default class JavaScript implements Language {
 		)
 
 		if (brokenImports.length === 0) {
-			vscode.window.setStatusBarMessage('Code Quicken: No broken import/require statements have been found.', 5000)
+			vscode.window.setStatusBarMessage('No broken import/require statements have been found.', 5000)
 			return null
 		}
 
@@ -269,10 +269,10 @@ export default class JavaScript implements Language {
 		await JavaScript.fixESLint()
 
 		if (nonResolvableImports.length === 0) {
-			vscode.window.setStatusBarMessage('Code Quicken: All broken import/require statements have been fixed.', 5000)
+			vscode.window.setStatusBarMessage('All broken import/require statements have been fixed.', 5000)
 
 		} else {
-			vscode.window.showWarningMessage(`Code Quicken: There ${nonResolvableImports.length === 1 ? 'was' : 'were'} ${nonResolvableImports.length} broken import/require statement${nonResolvableImports.length === 1 ? '' : 's'} that had not been fixed.`)
+			vscode.window.showWarningMessage(`There ${nonResolvableImports.length === 1 ? 'was' : 'were'} ${nonResolvableImports.length} broken import/require statement${nonResolvableImports.length === 1 ? '' : 's'} that had not been fixed.`)
 		}
 
 		return true
@@ -464,7 +464,7 @@ class FileItem implements Item {
 
 			const duplicateImport = getDuplicateImport(existingImports, path)
 			if (duplicateImport) {
-				vscode.window.showErrorMessage(`The module "${this.label}" has been already imported.`, { modal: true })
+				vscode.window.showErrorMessage(`The import of "${this.label}" already exists.`, { modal: true })
 				focusAt(duplicateImport.node, document)
 				return null
 			}
@@ -550,7 +550,7 @@ class IdentifierItem extends FileItem {
 						ts.isNamespaceImport(duplicateImportForIndexFile.node.importClause.namedBindings)
 					)
 					if (duplicateImportHasImportedEverything) {
-						vscode.window.showErrorMessage(`The module "${name}" has been already imported from "${duplicateImportForIndexFile.path}".`, { modal: true })
+						vscode.window.showErrorMessage(`The import of "${name}" already exists through "${duplicateImportForIndexFile.path}".`, { modal: true })
 						focusAt(duplicateImportForIndexFile.node, document)
 						return null
 					}
@@ -641,7 +641,7 @@ class IdentifierItem extends FileItem {
 					if (duplicateImport.node.importClause.namedBindings) {
 						// Try merging `* as namespace` with `* as namespace`
 						// Try merging `* as namespace` with `{ named }`
-						vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
+						vscode.window.showErrorMessage(`The import of "${name}" already exists.`, { modal: true })
 						focusAt(duplicateImport.node.importClause.namedBindings, document)
 						return null
 
@@ -690,7 +690,7 @@ class IdentifierItem extends FileItem {
 					if (ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)) {
 						// Try merging `{ named }` with `* as namespace`
 						const namespaceImport = duplicateImport.node.importClause.namedBindings
-						vscode.window.showErrorMessage(`The module "${path}" has been already imported as "${namespaceImport.name.text}".`, { modal: true })
+						vscode.window.showErrorMessage(`The import of "${path}" already exists as "${namespaceImport.name.text}".`, { modal: true })
 						focusAt(namespaceImport, document)
 						return null
 
@@ -704,7 +704,7 @@ class IdentifierItem extends FileItem {
 					} else if (ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 						// Try merging `{ named }` with `{ named }`
 						if (duplicateImport.node.importClause.namedBindings.elements.some(node => node.name.text === name)) {
-							vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
+							vscode.window.showErrorMessage(`The import of "${name}" already exists.`, { modal: true })
 							focusAt(duplicateImport.node, document)
 							return null
 
@@ -727,7 +727,7 @@ class IdentifierItem extends FileItem {
 				} else if (kind === 'default') { // In case of `import default from "path"`
 					if (duplicateImport.node.importClause.name) {
 						// Try merging `default` with `default`
-						vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
+						vscode.window.showErrorMessage(`The import of "${name}" already exists.`, { modal: true })
 						focusAt(duplicateImport.node, document)
 						return null
 
@@ -765,7 +765,7 @@ class IdentifierItem extends FileItem {
 				}
 
 			} else {
-				vscode.window.showErrorMessage(`The module "${name}" has been already imported.`, { modal: true })
+				vscode.window.showErrorMessage(`The import of "${name}" already exists.`, { modal: true })
 				focusAt(duplicateImport.node, document)
 				return null
 			}
@@ -815,7 +815,7 @@ class NodeItem implements Item {
 					ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)
 				)
 			) {
-				vscode.window.showErrorMessage(`The module "${this.path}" has been already imported.`, { modal: true })
+				vscode.window.showErrorMessage(`The import of "${this.path}" already exists.`, { modal: true })
 				focusAt(duplicateImport.node, document)
 				return null
 			}
@@ -831,7 +831,7 @@ class NodeItem implements Item {
 			if (selectedIdentifier === 'default') {
 				if (duplicateImport.node.importClause.name) {
 					// Try merging `default` with `default`
-					vscode.window.showErrorMessage(`The module "${this.path}" has been already imported.`, { modal: true })
+					vscode.window.showErrorMessage(`The import of "${this.path}" already exists.`, { modal: true })
 					focusAt(duplicateImport.node, document)
 					return null
 
@@ -847,7 +847,7 @@ class NodeItem implements Item {
 				if (duplicateImport.node.importClause.namedBindings && ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 					// Try merging `{ named }` with `{ named }`
 					if (duplicateImport.node.importClause.namedBindings.elements.some(node => node.name.text === selectedIdentifier)) {
-						vscode.window.showErrorMessage(`The module "${selectedIdentifier}" has been already imported.`, { modal: true })
+						vscode.window.showErrorMessage(`The import of "${selectedIdentifier}" already exists.`, { modal: true })
 						focusAt(duplicateImport.node, document)
 						return null
 
