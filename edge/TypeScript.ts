@@ -13,7 +13,13 @@ export default class TypeScript extends JavaScript {
 	constructor(extensionLevelConfig: ExtensionLevelConfigurations) {
 		super({
 			...extensionLevelConfig,
-			javascript: extensionLevelConfig.typescript
+			javascript: {
+				...extensionLevelConfig.javascript,
+				exclude: _.uniq([
+					...extensionLevelConfig.javascript.exclude,
+					...extensionLevelConfig.typescript.exclude,
+				]),
+			}
 		})
 	}
 

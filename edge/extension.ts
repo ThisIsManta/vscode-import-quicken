@@ -131,7 +131,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                 _.defer(() => {
                     // Insert the snippet
-                    selectedItem.addImport(editor)
+                    selectedItem.addImport(editor, language)
                 })
             })
             picker.show()
