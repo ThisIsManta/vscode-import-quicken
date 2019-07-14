@@ -454,6 +454,10 @@ class FileItem implements Item {
 
 	async addImport(editor: vscode.TextEditor) {
 		const document = editor.document
+		if (document.uri.fsPath === this.info.fullPath) {
+			vscode.window.showErrorMessage(`You cannot import the current active file.`, { modal: true })
+			return null
+		}
 
 		const codeTree = await JavaScript.parse(document)
 
@@ -621,6 +625,10 @@ class IdentifierItem extends FileItem {
 
 	async addImport(editor: vscode.TextEditor) {
 		const document = editor.document
+		if (document.uri.fsPath === this.info.fullPath) {
+			vscode.window.showErrorMessage(`You cannot import the current active file.`, { modal: true })
+			return null
+		}
 
 		const codeTree = JavaScript.parse(document)
 
