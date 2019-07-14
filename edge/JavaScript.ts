@@ -51,7 +51,7 @@ export default class JavaScript implements Language {
 						.value()
 
 					this.fileItemCache = []
-					const identifierCache = new Map<string, IdentifierMap>()
+					const identifierCache = new Map<FilePath, IdentifierMap>()
 					for (const link of fileLinks) {
 						this.fileItemCache.push(...await tryGetIdentifiers(link.fsPath, identifierCache))
 					}
@@ -423,6 +423,7 @@ async function tryGetIdentifiers(filePath: string, cache?: Map<string, Identifie
 	if (SUPPORTED_EXTENSION.test(filePath)) {
 		const identifiers = Array.from(await getExportedIdentifiers(filePath, cache))
 		return _.chain(identifiers)
+			.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
 			.map(([name, { text }]) => new IdentifierItem(filePath, name, text))
 			.sortBy(
 				identifier => identifier.defaultExported ? 0 : 1,
@@ -530,7 +531,7 @@ class IdentifierItem extends FileItem {
 		this.detail = _.truncate(text, { length: 120, omission: '...' })
 	}
 
-	async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument) {
+	private async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument) {
 		const indexFilePath = getFilePath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
 
 		const autoName = _.words(this.label.replace(/\..+/g, '')).join('')
@@ -1301,13 +1302,15 @@ async function getImportOrRequireSnippet(identifier: string, importClause: strin
 	}
 }
 
-interface IdentifierMap extends Map<string, { text: string, pathList: Array<string> }> { }
+type FilePath = string
+type IdentifierName = string
+interface IdentifierMap extends Map<IdentifierName, { text: string, pathList: Array<string> }> { }
 
 function δ(name: string) {
 	return name === 'default' ? '*default' : name
 }
 
-function getExportedIdentifiers(filePath: string, cachedFilePaths = new Map<string, IdentifierMap>(), processingFilePaths = new Set<string>()) {
+function getExportedIdentifiers(filePath: string, cachedFilePaths = new Map<FilePath, IdentifierMap>(), processingFilePaths = new Set<string>()) {
 	if (cachedFilePaths.has(filePath)) {
 		return cachedFilePaths.get(filePath)
 	}
