@@ -109,8 +109,10 @@ export default class JavaScript implements Language {
 				for (const link of fileLinks) {
 					this.fileItemCache.push(...await this.tryGetIdentifiers(link.fsPath, identifierCache))
 				}
+				const nonWordInitials = /^\W*/
 				this.fileItemCache = _.sortBy(this.fileItemCache,
-					item => item.info.fileNameWithExtension,
+					item => SUPPORTED_EXTENSION.test(item.info.fileNameWithExtension) ? 0 : 1,
+					item => item.info.fileNameWithExtension.replace(nonWordInitials, ''),
 					item => item instanceof IdentifierItem ? item.name.toLowerCase() : '',
 				)
 			}
