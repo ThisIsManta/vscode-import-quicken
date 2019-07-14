@@ -36,67 +36,67 @@ export default class JavaScript implements Language {
 
 	private workingThread: Promise<void>
 	setItems() {
-		if (!this.workingThread) {
-			this.workingThread = new Promise(async resolve => {
-				if (!this.fileItemCache) {
-					const fileExclusionList = this.configs.exclude.map(pattern => new RegExp(pattern))
-
-					const fileLinks = _.chain(await vscode.workspace.findFiles('**/*'))
-						.filter(await this.createLanguageSpecificFileFilter())
-						.reject(fileLink => {
-							const rootLink = vscode.workspace.getWorkspaceFolder(fileLink)
-							const workPath = _.trimStart(fileLink.fsPath.substring(rootLink.uri.fsPath.length), fp.sep)
-							return fileExclusionList.some(pattern => pattern.test(workPath))
-						})
-						.value()
-
-					this.fileItemCache = []
-					const identifierCache = new Map<FilePath, IdentifierMap>()
-					for (const link of fileLinks) {
-						this.fileItemCache.push(...await tryGetIdentifiers(link.fsPath, identifierCache))
-					}
-					this.fileItemCache = _.sortBy(this.fileItemCache,
-						item => item.info.fileNameWithExtension,
-						item => item instanceof IdentifierItem ? item.name.toLowerCase() : '',
-					)
-				}
-
-				const packageJsonList = await getPackageJsonList()
-				for (const { packageJsonPath, nodeModulePathList } of packageJsonList) {
-					if (this.nodeItemCache.has(packageJsonPath)) {
-						continue
-					}
-
-					const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'))
-					const dependencies = _.chain([packageJson.devDependencies, packageJson.dependencies])
-						.map(_.keys)
-						.flatten()
-						.value()
-
-					let nodeJsAPIs: Array<NodeItem> = []
-					if (dependencies.some(name => name === '@types/node')) {
-						const nodeJsVersion = getLocalModuleVersion('@types/node', nodeModulePathList)
-						nodeJsAPIs = getNodeJsAPIs(nodeModulePathList)
-							.map(name => new NodeItem(name, nodeJsVersion, this))
-					}
-
-					this.nodeItemCache.set(
-						packageJsonPath,
-						_.chain(dependencies)
-							.reject(name => name.startsWith('@types/'))
-							.map(name => new NodeItem(name, getLocalModuleVersion(name, nodeModulePathList), this))
-							.concat(nodeJsAPIs)
-							.sortBy(item => item.label)
-							.value()
-					)
-				}
-
-				this.workingThread = null
-				resolve()
-			})
+		if (this.workingThread) {
+			return this.workingThread
 		}
 
-		return this.workingThread
+		this.workingThread = new Promise(async resolve => {
+			if (!this.fileItemCache) {
+				const fileExclusionList = this.configs.exclude.map(pattern => new RegExp(pattern))
+
+				const fileLinks = _.chain(await vscode.workspace.findFiles('**/*'))
+					.filter(await this.createLanguageSpecificFileFilter())
+					.reject(fileLink => {
+						const rootLink = vscode.workspace.getWorkspaceFolder(fileLink)
+						const workPath = _.trimStart(fileLink.fsPath.substring(rootLink.uri.fsPath.length), fp.sep)
+						return fileExclusionList.some(pattern => pattern.test(workPath))
+					})
+					.value()
+
+				this.fileItemCache = []
+				const identifierCache = new Map<FilePath, IdentifierMap>()
+				for (const link of fileLinks) {
+					this.fileItemCache.push(...await tryGetIdentifiers(link.fsPath, identifierCache))
+				}
+				this.fileItemCache = _.sortBy(this.fileItemCache,
+					item => item.info.fileNameWithExtension,
+					item => item instanceof IdentifierItem ? item.name.toLowerCase() : '',
+				)
+			}
+
+			const packageJsonList = await getPackageJsonList()
+			for (const { packageJsonPath, nodeModulePathList } of packageJsonList) {
+				if (this.nodeItemCache.has(packageJsonPath)) {
+					continue
+				}
+
+				const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'))
+				const dependencies = _.chain([packageJson.devDependencies, packageJson.dependencies])
+					.map(_.keys)
+					.flatten()
+					.value()
+
+				let nodeJsAPIs: Array<NodeItem> = []
+				if (dependencies.some(name => name === '@types/node')) {
+					const nodeJsVersion = getLocalModuleVersion('@types/node', nodeModulePathList)
+					nodeJsAPIs = getNodeJsAPIs(nodeModulePathList)
+						.map(name => new NodeItem(name, nodeJsVersion, this))
+				}
+
+				this.nodeItemCache.set(
+					packageJsonPath,
+					_.chain(dependencies)
+						.reject(name => name.startsWith('@types/'))
+						.map(name => new NodeItem(name, getLocalModuleVersion(name, nodeModulePathList), this))
+						.concat(nodeJsAPIs)
+						.sortBy(item => item.label)
+						.value()
+				)
+			}
+
+			this.workingThread = null
+			resolve()
+		})
 	}
 
 	async getItems(document: vscode.TextDocument) {
@@ -124,6 +124,8 @@ export default class JavaScript implements Language {
 		if (fp.basename(filePath) === 'package.json') {
 			await this.setItems()
 		}
+
+		setImportCache(JavaScript.parse(filePath))
 	}
 
 	cutItem(filePath: string) {
@@ -281,6 +283,8 @@ export default class JavaScript implements Language {
 	reset() {
 		this.fileItemCache = null
 		this.nodeItemCache.clear()
+		namespaceImportCache.clear()
+		defaultImportCache.clear()
 	}
 
 	protected async createLanguageSpecificFileFilter() {
@@ -384,7 +388,7 @@ export default class JavaScript implements Language {
 				// Check if it should write `import * as...` instead of `import default`
 				if (moduleName.startsWith('{') === false && document.isUntitled === false && vscode.workspace.getWorkspaceFolder(document.uri)) {
 					if (modulePath.startsWith('.')) {
-						const fullPath = getFilePath([fp.dirname(document.fileName), modulePath], _.trimStart(fp.extname(document.fileName), '.'))
+						const fullPath = tryGetFullPath([fp.dirname(document.fileName), modulePath], _.trimStart(fp.extname(document.fileName), '.'))
 						if (fullPath === undefined) {
 							continue
 						}
@@ -419,9 +423,13 @@ export default class JavaScript implements Language {
 	}
 }
 
-async function tryGetIdentifiers(filePath: string, cache?: Map<string, IdentifierMap>) {
+async function tryGetIdentifiers(filePath: string, identifierCache?: Map<FilePath, IdentifierMap>) {
 	if (SUPPORTED_EXTENSION.test(filePath)) {
-		const identifiers = Array.from(await getExportedIdentifiers(filePath, cache))
+		const codeTree = JavaScript.parse(filePath)
+
+		setImportCache(codeTree)
+
+		const identifiers = Array.from(await getExportedIdentifiers(codeTree, identifierCache))
 		return _.chain(identifiers)
 			.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
 			.map(([name, { text }]) => new IdentifierItem(filePath, name, text))
@@ -460,6 +468,9 @@ class FileItem implements Item {
 			return null
 		}
 
+		// Save the current active cursor position as the asynchronous operations below might take too long to finish
+		const activeCursorPosition = vscode.window.activeTextEditor.selection.active
+
 		const codeTree = await JavaScript.parse(document)
 
 		const path = await this.getRelativePath(codeTree, document)
@@ -484,7 +495,7 @@ class FileItem implements Item {
 
 		const identifierOnlyForJsonFile = this.info.fileExtensionWithoutLeadingDot === 'json' ? autoName : null
 		const snippet = await getImportOrRequireSnippet(identifierOnlyForJsonFile, null, path, codeTree, document, true)
-		await editor.edit(worker => worker.insert(vscode.window.activeTextEditor.selection.active, snippet))
+		await editor.edit(worker => worker.insert(activeCursorPosition, snippet))
 		await JavaScript.fixESLint()
 	}
 
@@ -498,8 +509,8 @@ class FileItem implements Item {
 		}
 
 		// Remove file extension from the path
-		if (await guessImportPathFileExtensionExclusion(this.info.fileExtensionWithoutLeadingDot, codeTree)) {
-			path = path.replace(new RegExp(_.escapeRegExp(fp.extname(this.info.fileNameWithExtension)) + '$'), '')
+		if (await guessFileExtensionExclusion(this.info.fileExtensionWithoutLeadingDot, codeTree)) {
+			return path.replace(new RegExp(_.escapeRegExp(fp.extname(this.info.fileNameWithExtension)) + '$'), '')
 		}
 
 		return path
@@ -532,7 +543,7 @@ class IdentifierItem extends FileItem {
 	}
 
 	private async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument) {
-		const indexFilePath = getFilePath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
+		const indexFilePath = tryGetFullPath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
 
 		const autoName = _.words(this.label.replace(/\..+/g, '')).join('')
 
@@ -545,7 +556,7 @@ class IdentifierItem extends FileItem {
 				if (name === this.name && pathList.indexOf(this.info.fullPath) >= 0) {
 					// Stop processing if there is `import * as name from "path"`
 					const duplicateImportForIndexFile = existingImports.find(stub =>
-						getFilePath(
+						tryGetFullPath(
 							[fp.dirname(indexFilePath), stub.path], this.info.fileExtensionWithoutLeadingDot
 						) === indexFilePath)
 					const duplicateImportHasImportedEverything = (
@@ -563,7 +574,7 @@ class IdentifierItem extends FileItem {
 					const path = await indexFile.getRelativePath(codeTree, document)
 
 					if (this.defaultExported) {
-						const name = await guessDefaultFileImport(indexFile.info.fullPath, codeTree) || autoName
+						const name = defaultImportCache.get(indexFile.info.fullPath) || autoName
 						return {
 							name,
 							importClause: name,
@@ -572,7 +583,7 @@ class IdentifierItem extends FileItem {
 						}
 					}
 
-					const namespace = await guessNamespaceFileImport(indexFile.info.fullPath, codeTree)
+					const namespace = namespaceImportCache.get(indexFile.info.fullPath)
 					if (namespace) {
 						return {
 							name: namespace,
@@ -596,7 +607,7 @@ class IdentifierItem extends FileItem {
 		const path = await this.getRelativePath(codeTree, document)
 
 		if (this.defaultExported) {
-			const name = await guessDefaultFileImport(this.info.fullPath, codeTree) || autoName
+			const name = defaultImportCache.get(this.info.fullPath) || autoName
 			return {
 				name,
 				importClause: name,
@@ -605,7 +616,7 @@ class IdentifierItem extends FileItem {
 			}
 		}
 
-		const namespace = await guessNamespaceFileImport(this.info.fullPath, codeTree)
+		const namespace = namespaceImportCache.get(this.info.fullPath)
 		if (namespace) {
 			return {
 				name: namespace,
@@ -1098,62 +1109,34 @@ async function matchNearbyFiles<T>(filePath: string, matcher: (codeTree: ts.Sour
 	return defaultValue
 }
 
-async function guessDefaultFileImport(fullPath: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
+const defaultImportCache = new Map<FilePath, string>()
+const namespaceImportCache = new Map<FilePath, string>()
+
+function setImportCache(codeTree: ts.SourceFile) {
+	if (!codeTree) {
+		return
+	}
+
 	const existingImports = getExistingImports(codeTree)
-	const matchingImport = _.chain(existingImports)
-		.filter(({ path }) => /^\.\.?\//.test(path))
-		.map(({ node, path }) => {
-			if (
-				ts.isImportDeclaration(node) &&
-				node.importClause &&
-				node.importClause.name &&
-				ts.isIdentifier(node.importClause.name)
-			) {
-				return { name: node.importClause.name.text, path }
-			}
-		})
-		.compact()
-		.find(({ path }) =>
-			fullPath === getFilePath([fp.dirname(codeTree.fileName), path], _.trimStart(fp.extname(fullPath), '.'))
-		)
-		.value()
-	if (matchingImport) {
-		return matchingImport.name
+	for (const { node, path } of existingImports) {
+		if (!ts.isImportDeclaration(node) || !node.importClause) {
+			continue
+		}
+
+		const moduleNameOrFilePath = /^\.\.?\//.test(path)
+			? tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
+			: path
+
+		if (node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) {
+			namespaceImportCache.set(moduleNameOrFilePath, node.importClause.namedBindings.name.text)
+			continue
+		}
+
+		if (node.importClause.name && ts.isIdentifier(node.importClause.name)) {
+			defaultImportCache.set(moduleNameOrFilePath, node.importClause.name.text)
+			continue
+		}
 	}
-
-	if (stopPropagation) {
-		return null
-	}
-
-	return matchNearbyFiles(codeTree.fileName, (...args) => guessDefaultFileImport(fullPath, ...args), null)
-}
-
-async function guessNamespaceFileImport(fullPath: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
-	const existingImports = getExistingImports(codeTree)
-	const matchingImport = _.chain(existingImports)
-		.filter(({ path }) => /^\.\.?\//.test(path))
-		.map(({ node, path }) => {
-			if (
-				ts.isImportDeclaration(node) &&
-				node.importClause &&
-				node.importClause.namedBindings &&
-				ts.isNamespaceImport(node.importClause.namedBindings)
-			) {
-				return { name: node.importClause.namedBindings.name.text, path }
-			}
-		})
-		.compact()
-		.find(({ path }) => fullPath === getFilePath([fp.dirname(codeTree.fileName), path], fp.extname(fullPath).replace(/^\./, '')))
-		.value()
-	if (matchingImport) {
-		return matchingImport.name
-	}
-
-	if (stopPropagation) {
-		return null
-	}
-
-	return matchNearbyFiles(codeTree.fileName, (...args) => guessNamespaceFileImport(fullPath, ...args), null)
 }
 
 async function guessModuleImport(moduleName: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
@@ -1209,12 +1192,20 @@ async function guessIndexFileExclusion(indexFileInfo: FileInfo, codeTree: ts.Sou
 	return matchNearbyFiles(codeTree.fileName, (...args) => guessIndexFileExclusion(indexFileInfo, ...args), false)
 }
 
-async function guessImportPathFileExtensionExclusion(fileExtensionWithoutLeadingDot: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<boolean> {
+async function guessFileExtensionExclusion(fileExtensionWithoutLeadingDot: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<boolean> {
+	if (SUPPORTED_EXTENSION.test('.' + fileExtensionWithoutLeadingDot) === false) {
+		return false
+	}
+
 	const existingImports = getExistingImports(codeTree)
 	for (const { path } of existingImports) {
-		const fullPath = getFilePath([fp.dirname(codeTree.fileName), path], fileExtensionWithoutLeadingDot)
-		if (fullPath && fullPath.endsWith('.' + fileExtensionWithoutLeadingDot)) {
-			return !path.endsWith('.' + fileExtensionWithoutLeadingDot)
+		if (SUPPORTED_EXTENSION.test(path)) {
+			return false
+		}
+
+		const fullPath = tryGetFullPath([fp.dirname(codeTree.fileName), path], fileExtensionWithoutLeadingDot)
+		if (SUPPORTED_EXTENSION.test(fullPath)) {
+			return SUPPORTED_EXTENSION.test(path) === false
 		}
 	}
 
@@ -1222,7 +1213,7 @@ async function guessImportPathFileExtensionExclusion(fileExtensionWithoutLeading
 		return null
 	}
 
-	return matchNearbyFiles(codeTree.fileName, (...args) => guessImportPathFileExtensionExclusion(fileExtensionWithoutLeadingDot, ...args), false)
+	return matchNearbyFiles(codeTree.fileName, (...args) => guessFileExtensionExclusion(fileExtensionWithoutLeadingDot, ...args), false)
 }
 
 async function guessQuoteCharacter(codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
@@ -1310,7 +1301,9 @@ function δ(name: string) {
 	return name === 'default' ? '*default' : name
 }
 
-function getExportedIdentifiers(filePath: string, cachedFilePaths = new Map<FilePath, IdentifierMap>(), processingFilePaths = new Set<string>()) {
+function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cachedFilePaths = new Map<FilePath, IdentifierMap>(), processingFilePaths = new Set<string>()) {
+	const filePath = typeof filePathOrCodeTree === 'string' ? filePathOrCodeTree : filePathOrCodeTree.fileName
+
 	if (cachedFilePaths.has(filePath)) {
 		return cachedFilePaths.get(filePath)
 	}
@@ -1329,16 +1322,16 @@ function getExportedIdentifiers(filePath: string, cachedFilePaths = new Map<File
 	}
 
 	try {
-		const codeTree = JavaScript.parse(filePath)
-		codeTree.forEachChild(node => {
+		const codeTree = typeof filePathOrCodeTree === 'string' ? JavaScript.parse(filePath) : filePathOrCodeTree
+		for (const node of codeTree.statements) {
 			if (ts.isImportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) && node.importClause) {
 				if (/^[\.\/]/.test(node.moduleSpecifier.text) === false) {
-					return
+					continue
 				}
 
-				const path = getFilePath([fileDirectory, node.moduleSpecifier.text], fileExtension)
+				const path = tryGetFullPath([fileDirectory, node.moduleSpecifier.text], fileExtension)
 				if (path === undefined) {
-					return
+					continue
 				}
 
 				const transitIdentifiers = getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
@@ -1373,7 +1366,7 @@ function getExportedIdentifiers(filePath: string, cachedFilePaths = new Map<File
 
 			} else if (ts.isExportDeclaration(node)) {
 				const path = node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) &&
-					getFilePath([fileDirectory, node.moduleSpecifier.text], fileExtension)
+					tryGetFullPath([fileDirectory, node.moduleSpecifier.text], fileExtension)
 
 				if (node.exportClause) {
 					node.exportClause.elements.forEach(stub => {
@@ -1489,7 +1482,7 @@ function getExportedIdentifiers(filePath: string, cachedFilePaths = new Map<File
 					exportedNames.set(node.expression.left.name.text, { text: node.getText(), pathList: [filePath] })
 				}
 			}
-		})
+		}
 
 	} catch (ex) {
 		console.error(ex)
@@ -1504,17 +1497,32 @@ function getExportedIdentifiers(filePath: string, cachedFilePaths = new Map<File
 	return exportedNames
 }
 
-function getFilePath(pathList: Array<string>, preferredExtension: string): string {
+function tryGetFullPath(pathList: Array<string>, preferredExtension: string, cache?: Map<string, string>): string {
 	const fullPath = fp.resolve(...pathList)
+
+	if (cache) {
+		if (cache.has(fullPath)) {
+			return cache.get(fullPath)
+		}
+		if (cache.has(fullPath + preferredExtension)) {
+			return cache.get(fullPath + preferredExtension)
+		}
+	}
 
 	if (fs.existsSync(fullPath)) {
 		const fileStat = fs.lstatSync(fullPath)
 		if (fileStat.isFile()) {
+			if (cache) {
+				cache.set(fullPath, fullPath)
+			}
 			return fullPath
 
 		} else if (fileStat.isDirectory()) {
-			const indexPath = getFilePath([...pathList, 'index'], preferredExtension)
+			const indexPath = tryGetFullPath([...pathList, 'index'], preferredExtension)
 			if (indexPath !== undefined) {
+				if (cache) {
+					cache.set(fullPath, indexPath)
+				}
 				return indexPath
 			}
 		}
@@ -1524,6 +1532,9 @@ function getFilePath(pathList: Array<string>, preferredExtension: string): strin
 	for (const extension of possibleExtensions) {
 		const fullPathWithExtension = fullPath + '.' + extension
 		if (fs.existsSync(fullPathWithExtension) && fs.lstatSync(fullPathWithExtension).isFile()) {
+			if (cache) {
+				cache.set(fullPath, fullPathWithExtension)
+			}
 			return fullPathWithExtension
 		}
 	}

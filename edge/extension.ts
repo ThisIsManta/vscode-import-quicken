@@ -113,18 +113,18 @@ export function activate(context: vscode.ExtensionContext) {
             picker.placeholder = 'Type a file path or node module name'
             picker.items = items
             picker.matchOnDescription = true
-            picker.onDidAccept(async () => {
-                picker.hide()
-
+            picker.onDidAccept(() => {
                 const [selectedItem] = picker.selectedItems
                 if (!selectedItem) {
                     return null
                 }
 
-                // Insert the snippet
-                await selectedItem.addImport(editor)
-
                 picker.dispose()
+
+                _.defer(() => {
+                    // Insert the snippet
+                    selectedItem.addImport(editor)
+                })
             })
             picker.show()
 
