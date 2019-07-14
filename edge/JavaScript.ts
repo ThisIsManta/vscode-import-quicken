@@ -544,11 +544,12 @@ class IdentifierItem extends FileItem {
 
 	private async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument) {
 		const indexFilePath = tryGetFullPath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
+		const workingDirectory = fp.dirname(document.fileName)
 
 		const autoName = _.words(this.label.replace(/\..+/g, '')).join('')
 
 		// Try to import from the closest index file
-		if (indexFilePath && this.info.fullPath !== indexFilePath) {
+		if (indexFilePath && this.info.fullPath !== indexFilePath && indexFilePath.startsWith(workingDirectory + fp.sep) === false) {
 			const indexFile = new FileItem(indexFilePath)
 			const existingImports = getExistingImports(codeTree)
 			const exportedIdentifiersFromIndexFile = getExportedIdentifiers(indexFilePath)
