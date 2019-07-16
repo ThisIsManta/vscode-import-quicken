@@ -47,7 +47,7 @@ export default class JavaScript implements Language {
 			const identifiers = Array.from(await getExportedIdentifiers(codeTree, identifierCache))
 			return _.chain(identifiers)
 				.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
-				.map(([name, { text }]) => new IdentifierItem(filePath, name, text))
+				.map(([name, { sourceText: text }]) => new IdentifierItem(filePath, name, text))
 				.sortBy(
 					identifier => identifier.defaultExported ? 0 : 1,
 					identifier => identifier.name.toLowerCase()
@@ -604,51 +604,55 @@ class IdentifierItem extends FileItem {
 			const indexFile = new FileItem(indexFilePath)
 			const existingImports = getExistingImports(codeTree)
 			const exportedIdentifiersFromIndexFile = getExportedIdentifiers(indexFilePath)
-			for (const [name, { pathList }] of exportedIdentifiersFromIndexFile) {
-				if (name === this.name && pathList.indexOf(this.info.fullPath) >= 0) {
-					// Stop processing if there is `import * as name from "path"`
-					const duplicateImportForIndexFile = existingImports.find(stub =>
-						tryGetFullPath(
-							[fp.dirname(indexFilePath), stub.path], this.info.fileExtensionWithoutLeadingDot
-						) === indexFilePath)
-					const duplicateImportHasImportedEverything = (
-						duplicateImportForIndexFile &&
-						ts.isImportDeclaration(duplicateImportForIndexFile.node) &&
-						duplicateImportForIndexFile.node.importClause &&
-						ts.isNamespaceImport(duplicateImportForIndexFile.node.importClause.namedBindings)
-					)
-					if (duplicateImportHasImportedEverything) {
-						vscode.window.showErrorMessage(`The import of "${name}" already exists through "${duplicateImportForIndexFile.path}".`, { modal: true })
-						focusAt(duplicateImportForIndexFile.node, document)
-						return null
+			for (const [exportedName, { originalName, pathList }] of exportedIdentifiersFromIndexFile) {
+				if (_.includes(pathList, this.info.fullPath) === false) {
+					continue
+				}
+
+				if (originalName !== this.name) {
+					continue
+				}
+
+				// Stop processing if there is `import * as name from "path"`
+				const duplicateImportForIndexFile = existingImports.find(stub =>
+					tryGetFullPath(
+						[fp.dirname(indexFilePath), stub.path], this.info.fileExtensionWithoutLeadingDot
+					) === indexFilePath)
+				const duplicateImportHasImportedEverything = (
+					duplicateImportForIndexFile &&
+					ts.isImportDeclaration(duplicateImportForIndexFile.node) &&
+					duplicateImportForIndexFile.node.importClause &&
+					ts.isNamespaceImport(duplicateImportForIndexFile.node.importClause.namedBindings)
+				)
+				if (duplicateImportHasImportedEverything) {
+					vscode.window.showErrorMessage(`The import of "${this.label}" already exists through "${duplicateImportForIndexFile.path}".`, { modal: true })
+					focusAt(duplicateImportForIndexFile.node, document)
+					return null
+				}
+
+				const path = await indexFile.getRelativePath(codeTree, document)
+
+				if (exportedName === '*default') {
+					return {
+						name: defaultImportCache.get(indexFile.info.fullPath) || autoName,
+						kind: 'default',
+						path,
 					}
+				}
 
-					const path = await indexFile.getRelativePath(codeTree, document)
-
-					if (this.defaultExported) {
-						const name = defaultImportCache.get(indexFile.info.fullPath) || autoName
-						return {
-							name,
-							kind: 'default',
-							path,
-						}
+				const namespace = namespaceImportCache.get(indexFile.info.fullPath)
+				if (namespace) {
+					return {
+						name: namespace,
+						kind: 'namespace',
+						path,
 					}
+				}
 
-					const namespace = namespaceImportCache.get(indexFile.info.fullPath)
-					if (namespace) {
-						return {
-							name: namespace,
-							kind: 'namespace',
-							path,
-						}
-
-					} else {
-						return {
-							name,
-							kind: 'named',
-							path,
-						}
-					}
+				return {
+					name: exportedName,
+					kind: 'named',
+					path,
 				}
 			}
 		}
@@ -1333,7 +1337,7 @@ async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer',
 
 type FilePath = string
 type IdentifierName = string
-interface IdentifierMap extends Map<IdentifierName, { text: string, pathList: Array<string> }> { }
+interface IdentifierMap extends Map<IdentifierName, { originalName?: string, sourceText: string, pathList: Array<string> }> { }
 
 function δ(name: string) {
 	return name === 'default' ? '*default' : name
@@ -1377,7 +1381,7 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 				}
 
 				const path = tryGetFullPath([fileDirectory, node.moduleSpecifier.text], fileExtension)
-				if (path === undefined) {
+				if (!path) {
 					continue
 				}
 
@@ -1386,10 +1390,8 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 				if (node.importClause.name) {
 					// import named from "path"
 					if (transitIdentifiers.has('*default')) {
-						const { text, pathList } = transitIdentifiers.get('*default')
-						importedNames.set(node.importClause.name.text, { text, pathList: [path, ...pathList] })
-					} else {
-						importedNames.set(node.importClause.name.text, { text: null, pathList: [path] })
+						const { sourceText, pathList } = transitIdentifiers.get('*default')
+						importedNames.set(node.importClause.name.text, { originalName: '*default', sourceText, pathList: [path, ...pathList] })
 					}
 				}
 
@@ -1399,15 +1401,15 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 						for (const stub of node.importClause.namedBindings.elements) {
 							const name = stub.name.text
 							if (transitIdentifiers.has(name)) {
-								const { text, pathList } = transitIdentifiers.get(name)
-								importedNames.set(name, { text, pathList: [path, ...pathList] })
+								const { sourceText, pathList } = transitIdentifiers.get(name)
+								importedNames.set(name, { originalName: name, sourceText, pathList: [path, ...pathList] })
 							}
 						}
 
 					} else if (ts.isNamespaceImport(node.importClause.namedBindings)) {
 						// import * as namespace from "path"
 						// TODO: find the correct text by tracing `Namespace.Named`
-						importedNames.set(node.importClause.namedBindings.name.text, { text: node.getText(), pathList: [path] })
+						importedNames.set(node.importClause.namedBindings.name.text, { sourceText: node.getText(), pathList: [path] })
 					}
 				}
 
@@ -1422,31 +1424,31 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 							const transitIdentifiers = getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
 							if (stub.propertyName && transitIdentifiers.has(δ(stub.propertyName.text))) {
 								// export { named as exported } from "path"
-								const { text, pathList } = transitIdentifiers.get(δ(stub.propertyName.text))
-								exportedNames.set(name, { text, pathList: [filePath, path, ...pathList] })
+								const { originalName, sourceText, pathList } = transitIdentifiers.get(δ(stub.propertyName.text))
+								exportedNames.set(name, { originalName, sourceText, pathList: [filePath, path, ...pathList] })
 
 							} else if (transitIdentifiers.has(name)) {
 								// export { named } from "path"
-								const { text, pathList } = transitIdentifiers.get(name)
-								exportedNames.set(name, { text, pathList: [filePath, path, ...pathList] })
+								const { originalName, sourceText, pathList } = transitIdentifiers.get(name)
+								exportedNames.set(name, { originalName, sourceText, pathList: [filePath, path, ...pathList] })
 							}
 
 						} else {
 							if (stub.propertyName && importedNames.has(stub.propertyName.text)) {
 								// export { named as exported }
-								const { text, pathList } = importedNames.get(stub.propertyName.text)
-								exportedNames.set(name, { text, pathList: [filePath, ...pathList] })
+								const { originalName, sourceText, pathList } = importedNames.get(stub.propertyName.text)
+								exportedNames.set(name, { originalName, sourceText, pathList: [filePath, ...pathList] })
 
 							} else if (importedNames.has(name)) {
 								// import named from "path"
 								// export { named }
-								const { text, pathList } = importedNames.get(name)
-								exportedNames.set(name, { text, pathList: [filePath, ...pathList] })
+								const { originalName, sourceText, pathList } = importedNames.get(name)
+								exportedNames.set(name, { originalName, sourceText, pathList: [filePath, ...pathList] })
 
 							} else {
 								// const named = ...
 								// export { named }
-								exportedNames.set(name, { text: '', pathList: [filePath] })
+								exportedNames.set(name, { originalName: name, sourceText: '', pathList: [filePath] })
 							}
 						}
 					})
@@ -1454,18 +1456,19 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 				} else {
 					// export * from "path"
 					const transitIdentifiers = getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
-					transitIdentifiers.forEach(({ text, pathList }, name) => {
-						exportedNames.set(name, { text, pathList: [filePath, ...pathList] })
+					transitIdentifiers.forEach(({ originalName, sourceText, pathList }, name) => {
+						exportedNames.set(name, { originalName, sourceText, pathList: [filePath, ...pathList] })
 					})
 				}
 
-			} else if (ts.isExportAssignment(node)) {
+			} else if (ts.isExportAssignment(node) && ts.isIdentifier(node.expression)) {
 				// export default named
-				if (ts.isIdentifier(node.expression) && importedNames.has(node.expression.text)) {
-					const { text, pathList } = importedNames.get(node.expression.text)
-					exportedNames.set('*default', { text, pathList: [filePath, ...pathList] })
+				const name = node.expression.text
+				if (importedNames.has(name)) {
+					const { originalName, sourceText, pathList } = importedNames.get(name)
+					exportedNames.set('*default', { originalName, sourceText, pathList: [filePath, ...pathList] })
 				} else {
-					exportedNames.set('*default', { text: node.getText(), pathList: [filePath] })
+					exportedNames.set('*default', { originalName: name, sourceText: node.getText(), pathList: [filePath] })
 				}
 
 			} else if (
@@ -1475,7 +1478,11 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 				if (node.modifiers.length > 1 && node.modifiers[1].kind === ts.SyntaxKind.DefaultKeyword) {
 					// export default function () {}
 					// export default function named () {}
-					exportedNames.set('*default', { text: node.getText(), pathList: [filePath] })
+					if (ts.isFunctionDeclaration(node) && node.name) {
+						exportedNames.set('*default', { originalName: node.name.text, sourceText: node.getText(), pathList: [filePath] })
+					} else {
+						exportedNames.set('*default', { sourceText: node.getText(), pathList: [filePath] })
+					}
 
 				} else if (node.name) {
 					// export function named () {}
@@ -1483,7 +1490,7 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 					// export interface named {}
 					// export type named = ...
 					// export enum named = ...
-					exportedNames.set(node.name.text, { text: node.getText(), pathList: [filePath] })
+					exportedNames.set(node.name.text, { originalName: node.name.text, sourceText: node.getText(), pathList: [filePath] })
 				}
 
 			} else if (
@@ -1493,7 +1500,7 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 				// export const named = ...
 				node.declarationList.declarations.forEach(stub => {
 					if (ts.isIdentifier(stub.name)) {
-						exportedNames.set(stub.name.text, { text: node.getText(), pathList: [filePath] })
+						exportedNames.set(stub.name.text, { originalName: stub.name.text, sourceText: node.getText(), pathList: [filePath] })
 					}
 				})
 
@@ -1503,12 +1510,17 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 				ts.isPropertyAccessExpression(node.expression.left) &&
 				ts.isIdentifier(node.expression.left.expression) && node.expression.left.expression.text === 'module' && node.expression.left.name.text === 'exports'
 			) {
-				// module.exports = { ... }
-				if (ts.isIdentifier(node.expression.right) && importedNames.has(node.expression.right.text)) {
-					const { text, pathList } = importedNames.get(node.expression.right.text)
-					exportedNames.set('*default', { text, pathList: [filePath, ...pathList] })
+				// module.exports = ...
+				if (ts.isIdentifier(node.expression.right)) {
+					const name = node.expression.right.text
+					if (importedNames.has(name)) {
+						const { originalName, sourceText, pathList } = importedNames.get(name)
+						exportedNames.set('*default', { originalName, sourceText, pathList: [filePath, ...pathList] })
+					} else {
+						exportedNames.set('*default', { originalName: name, sourceText: node.getText(), pathList: [filePath] })
+					}
 				} else {
-					exportedNames.set('*default', { text: node.getText(), pathList: [filePath] })
+					exportedNames.set('*default', { sourceText: node.getText(), pathList: [filePath] })
 				}
 
 			} else if (
@@ -1522,11 +1534,16 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 				node.expression.left.expression.name.text === 'exports'
 			) {
 				// module.exports.named = ...
-				if (ts.isIdentifier(node.expression.right) && importedNames.has(node.expression.right.text)) {
-					const { text, pathList } = importedNames.get(node.expression.right.text)
-					exportedNames.set(node.expression.left.name.text, { text, pathList: [filePath, ...pathList] })
+				if (ts.isIdentifier(node.expression.right)) {
+					const name = node.expression.right.text
+					if (importedNames.has(name)) {
+						const { originalName, sourceText, pathList } = importedNames.get(name)
+						exportedNames.set(node.expression.left.name.text, { originalName, sourceText, pathList: [filePath, ...pathList] })
+					} else {
+						exportedNames.set(node.expression.left.name.text, { originalName: name, sourceText: node.getText(), pathList: [filePath] })
+					}
 				} else {
-					exportedNames.set(node.expression.left.name.text, { text: node.getText(), pathList: [filePath] })
+					exportedNames.set(node.expression.left.name.text, { sourceText: node.getText(), pathList: [filePath] })
 				}
 			}
 		}
