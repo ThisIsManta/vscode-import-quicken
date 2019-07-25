@@ -1,3 +1,4 @@
+import { fs } from 'mz'
 import * as _ from 'lodash'
 import * as vscode from 'vscode'
 
@@ -11,35 +12,51 @@ let languages: Array<Language>
 export function activate(context: vscode.ExtensionContext) {
     const fileWatch = vscode.workspace.createFileSystemWatcher('**/*')
     context.subscriptions.push(fileWatch)
-    fileWatch.onDidCreate(e => {
-        for (const language of languages) {
-            language.addItem ? language.addItem(e.fsPath) : language.reset()
-        }
-    })
-    fileWatch.onDidDelete(e => {
-        for (const language of languages) {
-            language.cutItem ? language.cutItem(e.fsPath) : language.reset()
-        }
-    })
-    const fileChangePathList = new Set<string>()
-    const propagateFileChange = _.debounce(() => {
-        for (const filePath of Array.from(fileChangePathList)) {
+    const fileChangeList = new Set<string>()
+    const propagateFileChange = _.debounce(async () => {
+        for (const filePath of Array.from(fileChangeList)) {
             if (vscode.window.activeTextEditor && filePath === vscode.window.activeTextEditor.document.uri.fsPath) {
                 continue
             }
 
-            for (const language of languages) {
-                language.cutItem ? language.cutItem(filePath) : language.reset()
-                language.addItem ? language.addItem(filePath) : language.reset()
+            if (filePath.split(/\\|\//).includes('.git')) {
+                continue
             }
 
-            fileChangePathList.delete(filePath)
+            const fileExists = await fs.exists(filePath)
+            if (fileExists && (await fs.lstat(filePath)).isFile() === false) {
+                continue
+            }
+
+            await Promise.all(languages.map(async language => {
+                if (language.cutItem) {
+                    await language.cutItem(filePath)
+                }
+
+                if (fileExists && language.addItem) {
+                    await language.addItem(filePath)
+                }
+
+                if (!language.cutItem && !language.addItem) {
+                    await language.reset()
+                }
+            }))
+
+            fileChangeList.delete(filePath)
         }
     }, 1500)
-    fileWatch.onDidChange(e => {
-        fileChangePathList.add(e.fsPath)
+    context.subscriptions.push(fileWatch.onDidCreate(e => {
+        fileChangeList.add(e.fsPath)
         propagateFileChange()
-    })
+    }))
+    context.subscriptions.push(fileWatch.onDidDelete(e => {
+        fileChangeList.add(e.fsPath)
+        propagateFileChange()
+    }))
+    context.subscriptions.push(fileWatch.onDidChange(e => {
+        fileChangeList.add(e.fsPath)
+        propagateFileChange()
+    }))
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(propagateFileChange))
 
     let config: ExtensionLevelConfigurations
