@@ -125,13 +125,15 @@
     "devDependencies": {
         "@types/glob": "^7.1.1",
         "@types/lodash": "^4.14.135",
+        "@types/mz": "0.0.32",
         "@types/node": "^10.0.0",
         "@types/vscode": "1.36.0",
         "vscode": "^1.1.35"
     },
     "dependencies": {
         "glob": "^7.1.4",
-        "lodash": "^4.17.11",
+        "lodash": "^4.17.15",
+        "mz": "^2.7.0",
         "stylus": "^0.54.5",
         "typescript": "^3.5.2"
     }

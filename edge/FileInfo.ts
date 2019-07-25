@@ -1,4 +1,3 @@
-import * as fs from 'fs'
 import * as fp from 'path'
 import * as _ from 'lodash'
 
@@ -42,30 +41,5 @@ export default class FileInfo {
 			relativePath = './' + relativePath
 		}
 		return relativePath
-	}
-
-	static resolve(...path: string[]) {
-		let filePath = fp.resolve(...path)
-		let fileList: Array<string>
-
-		if (fs.existsSync(filePath)) {
-			let fileStat = fs.lstatSync(filePath)
-			if (fileStat.isFile()) {
-				fileList = [filePath]
-
-			} else if (fileStat.isDirectory()) {
-				fileList = fs.readdirSync(filePath)
-					.map(path => fp.join(filePath, path))
-			}
-
-		} else {
-			const fileName = new RegExp('/' + _.escapeRegExp(fp.basename(filePath) + '\\.\\w+'))
-			let dirxPath = fp.dirname(filePath)
-			fileList = fs.readdirSync(dirxPath)
-				.map(path => fp.join(dirxPath, path))
-				.filter(path => fileName.test(fp.basename(path)))
-		}
-
-		return fileList.map(path => new FileInfo(path))
 	}
 }

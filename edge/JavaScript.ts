@@ -1,4 +1,4 @@
-import * as fs from 'fs'
+import { fs } from 'mz'
 import * as fp from 'path'
 import * as glob from 'glob';
 import * as _ from 'lodash'
@@ -40,9 +40,9 @@ export default class JavaScript implements Language {
 
 	private async tryGetIdentifiers(filePath: string, identifierCache?: Map<FilePath, IdentifierMap>) {
 		if (SUPPORTED_EXTENSION.test(filePath)) {
-			const codeTree = JavaScript.parse(filePath)
+			const codeTree = await JavaScript.parse(filePath)
 
-			this.setImportCache(codeTree)
+			await this.setImportCache(codeTree)
 
 			const identifiers = Array.from(await getExportedIdentifiers(codeTree, identifierCache))
 			return _.chain(identifiers)
@@ -58,7 +58,7 @@ export default class JavaScript implements Language {
 		return [new FileItem(filePath)]
 	}
 
-	private setImportCache(codeTree: ts.SourceFile) {
+	private async setImportCache(codeTree: ts.SourceFile) {
 		if (!codeTree) {
 			return
 		}
@@ -70,7 +70,7 @@ export default class JavaScript implements Language {
 			}
 
 			const moduleNameOrFilePath = /^\.\.?\//.test(path)
-				? tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
+				? await tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
 				: path
 
 			if (node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) {
@@ -123,27 +123,30 @@ export default class JavaScript implements Language {
 					continue
 				}
 
-				const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'))
-				const dependencies = _.chain([packageJson.devDependencies, packageJson.dependencies])
+				const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+				const dependencyNameList = _.chain([packageJson.devDependencies, packageJson.dependencies])
 					.map(_.keys)
 					.flatten()
 					.value()
 
 				let nodeJsAPIs: Array<NodeItem> = []
-				if (dependencies.some(name => name === '@types/node')) {
-					const nodeJsVersion = getLocalModuleVersion('@types/node', nodeModulePathList)
-					nodeJsAPIs = getNodeJsAPIs(nodeModulePathList)
-						.map(name => new NodeItem(name, nodeJsVersion))
+				if (dependencyNameList.some(name => name === '@types/node')) {
+					const nodeJsVersion = await getLocalModuleVersion('@types/node', nodeModulePathList)
+					nodeJsAPIs = (await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeItem(name, nodeJsVersion))
+				}
+
+				const dependencyItemList: Array<NodeItem> = []
+				for (const name of dependencyNameList) {
+					if (name.startsWith('@types/')) {
+						continue
+					}
+
+					dependencyItemList.push(new NodeItem(name, await getLocalModuleVersion(name, nodeModulePathList)))
 				}
 
 				nodeItemCache.set(
 					packageJsonPath,
-					_.chain(dependencies)
-						.reject(name => name.startsWith('@types/'))
-						.map(name => new NodeItem(name, getLocalModuleVersion(name, nodeModulePathList)))
-						.concat(nodeJsAPIs)
-						.sortBy(item => item.label)
-						.value()
+					_.sortBy([...dependencyItemList, ...nodeJsAPIs], item => item.label)
 				)
 			}
 
@@ -178,7 +181,7 @@ export default class JavaScript implements Language {
 			await this.setItems()
 		}
 
-		this.setImportCache(JavaScript.parse(filePath))
+		await this.setImportCache(await JavaScript.parse(filePath))
 	}
 
 	cutItem(filePath: string) {
@@ -242,7 +245,7 @@ export default class JavaScript implements Language {
 			}
 		}
 
-		const codeTree = JavaScript.parse(document)
+		const codeTree = await JavaScript.parse(document)
 		if (!codeTree) {
 			return false
 		}
@@ -273,10 +276,18 @@ export default class JavaScript implements Language {
 				)),
 		]).filter(item => item.originalRelativePath)
 
-		const brokenImports = totalImports.filter(item =>
-			fs.existsSync(fp.join(documentFileInfo.directoryPath, item.originalRelativePath)) === false &&
-			fs.existsSync(fp.join(documentFileInfo.directoryPath, item.originalRelativePath + '.' + documentFileInfo.fileExtensionWithoutLeadingDot)) === false
-		)
+		const getBrokenImports = async () => {
+			const imports = await Promise.all(totalImports.map(async stub => {
+				if (
+					await fs.exists(fp.join(documentFileInfo.directoryPath, stub.originalRelativePath)) === false &&
+					await fs.exists(fp.join(documentFileInfo.directoryPath, stub.originalRelativePath + '.' + documentFileInfo.fileExtensionWithoutLeadingDot)) === false
+				) {
+					return stub
+				}
+			}))
+			return _.compact(imports)
+		}
+		const brokenImports = await getBrokenImports()
 
 		if (brokenImports.length === 0) {
 			vscode.window.setStatusBarMessage('No broken import/require statements have been found.', 5000)
@@ -354,14 +365,14 @@ export default class JavaScript implements Language {
 		}
 	}
 
-	static parse(documentOrFilePath: vscode.TextDocument | string) {
+	static async parse(documentOrFilePath: vscode.TextDocument | string) {
 		const filePath = typeof documentOrFilePath === 'string' ? documentOrFilePath : documentOrFilePath.fileName
 		if (SUPPORTED_EXTENSION.test(filePath) === false) {
 			return null
 		}
 
 		try {
-			const codeText = typeof documentOrFilePath === 'string' ? fs.readFileSync(filePath, 'utf-8') : documentOrFilePath.getText()
+			const codeText = typeof documentOrFilePath === 'string' ? await fs.readFile(filePath, 'utf-8') : documentOrFilePath.getText()
 			return ts.createSourceFile(filePath, codeText, ts.ScriptTarget.ESNext, true)
 
 		} catch (ex) {
@@ -377,7 +388,7 @@ export default class JavaScript implements Language {
 			return null
 		}
 
-		const codeTree = JavaScript.parse(document)
+		const codeTree = await JavaScript.parse(document)
 		if (!codeTree) {
 			return null
 		}
@@ -448,7 +459,7 @@ export default class JavaScript implements Language {
 				// Check if it should write `import * as...` instead of `import default`
 				if (moduleName.startsWith('{') === false && document.isUntitled === false && vscode.workspace.getWorkspaceFolder(document.uri)) {
 					if (modulePath.startsWith('.')) {
-						const fullPath = tryGetFullPath([fp.dirname(document.fileName), modulePath], _.trimStart(fp.extname(document.fileName), '.'))
+						const fullPath = await tryGetFullPath([fp.dirname(document.fileName), modulePath], _.trimStart(fp.extname(document.fileName), '.'))
 						if (fullPath === undefined) {
 							continue
 						}
@@ -594,7 +605,7 @@ class IdentifierItem extends FileItem {
 	}
 
 	private async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument): Promise<{ name: string, kind: ImportKind, path: string } | null> {
-		const indexFilePath = tryGetFullPath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
+		const indexFilePath = await tryGetFullPath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
 		const workingDirectory = fp.dirname(document.fileName)
 
 		const autoName = _.words(this.label.replace(/\..+/g, '')).join('')
@@ -603,7 +614,31 @@ class IdentifierItem extends FileItem {
 		if (indexFilePath && this.info.fullPath !== indexFilePath && indexFilePath.startsWith(workingDirectory + fp.sep) === false) {
 			const indexFile = new FileItem(indexFilePath)
 			const existingImports = getExistingImports(codeTree)
-			const exportedIdentifiersFromIndexFile = getExportedIdentifiers(indexFilePath)
+
+			const getDuplicateImportForIndexFile = async () => {
+				for (const stub of existingImports) {
+					const path = await tryGetFullPath([fp.dirname(indexFilePath), stub.path], this.info.fileExtensionWithoutLeadingDot)
+					if (path === indexFilePath) {
+						return stub
+					}
+				}
+			}
+			const duplicateImportForIndexFile = await getDuplicateImportForIndexFile()
+			const duplicateImportHasImportedEverything = (
+				duplicateImportForIndexFile &&
+				ts.isImportDeclaration(duplicateImportForIndexFile.node) &&
+				duplicateImportForIndexFile.node.importClause &&
+				ts.isNamespaceImport(duplicateImportForIndexFile.node.importClause.namedBindings)
+			)
+
+			// Stop processing if there is `import * as name from "path"`
+			if (duplicateImportHasImportedEverything) {
+				vscode.window.showErrorMessage(`The import of "${this.label}" already exists through "${duplicateImportForIndexFile.path}".`, { modal: true })
+				focusAt(duplicateImportForIndexFile.node, document)
+				return null
+			}
+
+			const exportedIdentifiersFromIndexFile = await getExportedIdentifiers(indexFilePath)
 			for (const [exportedName, { originalName, pathList }] of exportedIdentifiersFromIndexFile) {
 				if (_.includes(pathList, this.info.fullPath) === false) {
 					continue
@@ -611,23 +646,6 @@ class IdentifierItem extends FileItem {
 
 				if (originalName !== this.name) {
 					continue
-				}
-
-				// Stop processing if there is `import * as name from "path"`
-				const duplicateImportForIndexFile = existingImports.find(stub =>
-					tryGetFullPath(
-						[fp.dirname(indexFilePath), stub.path], this.info.fileExtensionWithoutLeadingDot
-					) === indexFilePath)
-				const duplicateImportHasImportedEverything = (
-					duplicateImportForIndexFile &&
-					ts.isImportDeclaration(duplicateImportForIndexFile.node) &&
-					duplicateImportForIndexFile.node.importClause &&
-					ts.isNamespaceImport(duplicateImportForIndexFile.node.importClause.namedBindings)
-				)
-				if (duplicateImportHasImportedEverything) {
-					vscode.window.showErrorMessage(`The import of "${this.label}" already exists through "${duplicateImportForIndexFile.path}".`, { modal: true })
-					focusAt(duplicateImportForIndexFile.node, document)
-					return null
 				}
 
 				const path = await indexFile.getRelativePath(codeTree, document)
@@ -696,7 +714,7 @@ class IdentifierItem extends FileItem {
 			return null
 		}
 
-		const codeTree = JavaScript.parse(document)
+		const codeTree = await JavaScript.parse(document)
 		if (!codeTree) {
 			return null
 		}
@@ -877,7 +895,7 @@ class NodeItem implements Item {
 		const importDefaultIsPreferred = await language.checkIfImportDefaultIsPreferredOverNamespace()
 		const typeDefinitions = await this.getTypeDefinitions(document)
 
-		const codeTree = JavaScript.parse(document)
+		const codeTree = await JavaScript.parse(document)
 		if (!codeTree) {
 			return null
 		}
@@ -997,15 +1015,21 @@ class NodeItem implements Item {
 			return []
 		}
 
-		const definitionPath = nodeModulePathList
-			.map(path => fp.join(path, 'node_modules', '@types/' + this.label, 'index.d.ts'))
-			.find(path => fs.existsSync(path))
+		const getDefinitionPath = async () => {
+			for (const path of nodeModulePathList) {
+				const fullPath = fp.join(path, 'node_modules', '@types/' + this.label, 'index.d.ts')
+				if (await fs.exists(fullPath)) {
+					return fullPath
+				}
+			}
+		}
+		const definitionPath = await getDefinitionPath()
 		if (definitionPath === undefined) {
 			return []
 		}
 
 		try {
-			const codeTree = JavaScript.parse(definitionPath)
+			const codeTree = await JavaScript.parse(definitionPath)
 			const typeDefinitions: Array<string> = []
 
 			let globallyExportedIdentifier: string = null
@@ -1158,7 +1182,7 @@ async function matchNearbyFiles<T>(filePath: string, matcher: (codeTree: ts.Sour
 				continue
 			}
 
-			const codeTree = JavaScript.parse(link.fsPath)
+			const codeTree = await JavaScript.parse(link.fsPath)
 			if (!codeTree) {
 				continue
 			}
@@ -1237,7 +1261,7 @@ async function guessFileExtensionExclusion(fileExtensionWithoutLeadingDot: strin
 			return false
 		}
 
-		const fullPath = tryGetFullPath([fp.dirname(codeTree.fileName), path], fileExtensionWithoutLeadingDot)
+		const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fileExtensionWithoutLeadingDot)
 		if (SUPPORTED_EXTENSION.test(fullPath)) {
 			return SUPPORTED_EXTENSION.test(path) === false
 		}
@@ -1343,7 +1367,7 @@ function δ(name: string) {
 	return name === 'default' ? '*default' : name
 }
 
-function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cachedFilePaths = new Map<FilePath, IdentifierMap>(), processingFilePaths = new Set<string>()) {
+async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cachedFilePaths = new Map<FilePath, IdentifierMap>(), processingFilePaths = new Set<string>()) {
 	const exportedNames: IdentifierMap = new Map()
 
 	if (!filePathOrCodeTree) {
@@ -1363,7 +1387,7 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 		processingFilePaths.add(filePath)
 	}
 
-	const codeTree = typeof filePathOrCodeTree === 'string' ? JavaScript.parse(filePath) : filePathOrCodeTree
+	const codeTree = typeof filePathOrCodeTree === 'string' ? await JavaScript.parse(filePath) : filePathOrCodeTree
 	if (!codeTree) {
 		return exportedNames
 	}
@@ -1380,12 +1404,12 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 					continue
 				}
 
-				const path = tryGetFullPath([fileDirectory, node.moduleSpecifier.text], fileExtension)
+				const path = await tryGetFullPath([fileDirectory, node.moduleSpecifier.text], fileExtension)
 				if (!path) {
 					continue
 				}
 
-				const transitIdentifiers = getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
+				const transitIdentifiers = await getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
 
 				if (node.importClause.name) {
 					// import named from "path"
@@ -1415,13 +1439,13 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 
 			} else if (ts.isExportDeclaration(node)) {
 				const path = node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) &&
-					tryGetFullPath([fileDirectory, node.moduleSpecifier.text], fileExtension)
+					await tryGetFullPath([fileDirectory, node.moduleSpecifier.text], fileExtension)
 
 				if (node.exportClause) {
-					node.exportClause.elements.forEach(stub => {
+					for (const stub of node.exportClause.elements) {
 						const name = stub.name.text
 						if (path) {
-							const transitIdentifiers = getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
+							const transitIdentifiers = await getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
 							if (stub.propertyName && transitIdentifiers.has(δ(stub.propertyName.text))) {
 								// export { named as exported } from "path"
 								const { originalName, sourceText, pathList } = transitIdentifiers.get(δ(stub.propertyName.text))
@@ -1451,11 +1475,11 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 								exportedNames.set(name, { originalName: name, sourceText: '', pathList: [filePath] })
 							}
 						}
-					})
+					}
 
 				} else {
 					// export * from "path"
-					const transitIdentifiers = getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
+					const transitIdentifiers = await getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
 					transitIdentifiers.forEach(({ originalName, sourceText, pathList }, name) => {
 						exportedNames.set(name, { originalName, sourceText, pathList: [filePath, ...pathList] })
 					})
@@ -1561,7 +1585,7 @@ function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cach
 	return exportedNames
 }
 
-function tryGetFullPath(pathList: Array<string>, preferredExtension: string, cache?: Map<string, string>): string {
+async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, cache?: Map<string, string>): Promise<string> {
 	const fullPath = fp.resolve(...pathList)
 
 	if (cache) {
@@ -1573,8 +1597,8 @@ function tryGetFullPath(pathList: Array<string>, preferredExtension: string, cac
 		}
 	}
 
-	if (fs.existsSync(fullPath)) {
-		const fileStat = fs.lstatSync(fullPath)
+	if (await fs.exists(fullPath)) {
+		const fileStat = await fs.lstat(fullPath)
 		if (fileStat.isFile()) {
 			if (cache) {
 				cache.set(fullPath, fullPath)
@@ -1582,7 +1606,7 @@ function tryGetFullPath(pathList: Array<string>, preferredExtension: string, cac
 			return fullPath
 
 		} else if (fileStat.isDirectory()) {
-			const indexPath = tryGetFullPath([...pathList, 'index'], preferredExtension)
+			const indexPath = await tryGetFullPath([...pathList, 'index'], preferredExtension)
 			if (indexPath !== undefined) {
 				if (cache) {
 					cache.set(fullPath, indexPath)
@@ -1595,7 +1619,7 @@ function tryGetFullPath(pathList: Array<string>, preferredExtension: string, cac
 	const possibleExtensions = _.uniq([preferredExtension.toLowerCase(), 'tsx', 'ts', 'jsx', 'js'])
 	for (const extension of possibleExtensions) {
 		const fullPathWithExtension = fullPath + '.' + extension
-		if (fs.existsSync(fullPathWithExtension) && fs.lstatSync(fullPathWithExtension).isFile()) {
+		if (await fs.exists(fullPathWithExtension) && (await fs.lstat(fullPathWithExtension)).isFile()) {
 			if (cache) {
 				cache.set(fullPath, fullPathWithExtension)
 			}
@@ -1672,10 +1696,10 @@ function focusAt(node: { getStart: () => number, getEnd: () => number }, documen
 	)
 }
 
-function getLocalModuleVersion(name: string, modulePathList: Array<string>) {
+async function getLocalModuleVersion(name: string, modulePathList: Array<string>) {
 	for (const modulePath of modulePathList) {
 		try {
-			const packageJson = JSON.parse(fs.readFileSync(fp.join(modulePath, 'node_modules', name, 'package.json'), 'utf-8'))
+			const packageJson = JSON.parse(await fs.readFile(fp.join(modulePath, 'node_modules', name, 'package.json'), 'utf-8'))
 			if (packageJson.version) {
 				return packageJson.version as string
 			}
@@ -1686,9 +1710,9 @@ function getLocalModuleVersion(name: string, modulePathList: Array<string>) {
 	return null
 }
 
-function getNodeJsAPIs(possibleModulePathList: Array<string>) {
+async function getNodeJsAPIs(possibleModulePathList: Array<string>) {
 	for (const modulePath of possibleModulePathList) {
-		const codeTree = JavaScript.parse(fp.join(modulePath, 'node_modules', '@types/node', 'index.d.ts'))
+		const codeTree = await JavaScript.parse(fp.join(modulePath, 'node_modules', '@types/node', 'index.d.ts'))
 		if (!codeTree) {
 			continue
 		}
@@ -1714,18 +1738,23 @@ const getPackageJsonList = _.memoize(async () => {
 
 	const packageJsonPathList = (await vscode.workspace.findFiles('**/package.json', '**/node_modules/**')).map(link => link.fsPath)
 
-	return _.chain(packageJsonPathList)
-		.map(packageJsonPath => ({
+	const packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }> = []
+	for (const packageJsonPath of packageJsonPathList) {
+		const nodeModulePathList: Array<string> = []
+		for (const yarnLockPath of yarnLockPathList) {
+			if (await checkYarnWorkspace(packageJsonPath, yarnLockPath)) {
+				nodeModulePathList.push(fp.dirname(yarnLockPath))
+			}
+			nodeModulePathList.push(fp.dirname(packageJsonPath))
+		}
+
+		packageJsonList.push({
 			packageJsonPath,
-			nodeModulePathList: _.chain(yarnLockPathList)
-				.filter(yarnLockPath => checkYarnWorkspace(packageJsonPath, yarnLockPath))
-				.concat(packageJsonPath)
-				.map(path => fp.dirname(path))
-				.uniq()
-				.value()
-		}))
-		.orderBy(({ packageJsonPath }) => fp.dirname(packageJsonPath).split(fp.sep).length, 'desc')
-		.value()
+			nodeModulePathList: _.uniq(nodeModulePathList),
+		})
+	}
+
+	return _.orderBy(packageJsonList, ({ packageJsonPath }) => fp.dirname(packageJsonPath).split(fp.sep).length, 'desc')
 })
 
 function getClosestPackageJson<T extends { packageJsonPath: string }>(filePath: string, packageJsonList: Array<T>) {
@@ -1733,13 +1762,13 @@ function getClosestPackageJson<T extends { packageJsonPath: string }>(filePath: 
 }
 
 // Copy from https://github.com/ThisIsManta/vscode-package-watch/blob/master/edge/extension.ts
-function checkYarnWorkspace(packageJsonPath: string, yarnLockPath: string) {
+async function checkYarnWorkspace(packageJsonPath: string, yarnLockPath: string) {
 	if (!packageJsonPath || !yarnLockPath) {
 		return false
 	}
 
 	// See https://yarnpkg.com/lang/en/docs/workspaces/
-	const packageJsonForYarnWorkspace = JSON.parse(fs.readFileSync(fp.join(fp.dirname(yarnLockPath), 'package.json'), 'utf-8')) as { private?: boolean, workspaces?: Array<string> }
+	const packageJsonForYarnWorkspace = JSON.parse(await fs.readFile(fp.join(fp.dirname(yarnLockPath), 'package.json'), 'utf-8')) as { private?: boolean, workspaces?: Array<string> }
 	if (!packageJsonForYarnWorkspace || packageJsonForYarnWorkspace.private !== true || !packageJsonForYarnWorkspace.workspaces) {
 		return false
 	}

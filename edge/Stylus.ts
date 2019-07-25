@@ -1,4 +1,4 @@
-import * as fs from 'fs'
+import { fs} from 'mz'
 import * as fp from 'path'
 import * as _ from 'lodash'
 import * as vscode from 'vscode'
@@ -92,7 +92,7 @@ export default class Stylus implements Language {
 				path = _.get(node, 'args.nodes.0.nodes.0')
 			}
 
-			if (path && fs.existsSync(path) === false) {
+			if (path && await fs.exists(path) === false) {
 				brokenImports.push(path)
 			}
 		}

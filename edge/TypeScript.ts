@@ -1,4 +1,4 @@
-import * as fs from 'fs'
+import { fs } from 'mz'
 import * as fp from 'path'
 import * as _ from 'lodash'
 import * as vscode from 'vscode'
@@ -59,7 +59,7 @@ export default class TypeScript extends JavaScript {
 			.find(path => vscode.window.activeTextEditor.document.uri.fsPath.startsWith(fp.dirname(path) + fp.sep))
 			.value()
 		if (path) {
-			const { config, error } = ts.parseConfigFileTextToJson(path, fs.readFileSync(path, 'utf-8'))
+			const { config, error } = ts.parseConfigFileTextToJson(path, await fs.readFile(path, 'utf-8'))
 			if (config && !error) {
 				return config
 			}
