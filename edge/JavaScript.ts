@@ -507,7 +507,7 @@ class FileItem implements Item {
 
 		this.label = this.info.fileNameWithExtension
 
-		const workspaceDirectory = vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri).uri.fsPath
+		const workspaceDirectory = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath)).uri.fsPath
 		this.description = _.trim(this.info.fullPath.substring(workspaceDirectory.length), fp.sep)
 	}
 
@@ -523,7 +523,7 @@ class FileItem implements Item {
 		}
 
 		// Save the current active cursor position as the asynchronous operations below might take too long to finish
-		const activeCursorPosition = vscode.window.activeTextEditor.selection.active
+		const activeCursorPosition = editor.selection.active
 
 		const codeTree = await JavaScript.parse(document)
 		if (!codeTree) {
@@ -1687,7 +1687,12 @@ function findNodesRecursively<T extends ts.Node>(node: ts.Node, condition: (node
 }
 
 function focusAt(node: { getStart: () => number, getEnd: () => number }, document: vscode.TextDocument) {
-	vscode.window.activeTextEditor.revealRange(
+	const editor = vscode.window.activeTextEditor
+	if (!editor) {
+		return
+	}
+
+	editor.revealRange(
 		new vscode.Range(
 			document.positionAt(node.getStart()),
 			document.positionAt(node.getEnd())

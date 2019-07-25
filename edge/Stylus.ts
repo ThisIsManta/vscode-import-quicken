@@ -229,7 +229,7 @@ class FileItem implements Item {
 					if (duplicateImport) {
 						vscode.window.showInformationMessage(`The module "${this.label}" has been already imported.`)
 						const position = new vscode.Position(duplicateImport.lineno - 1, duplicateImport.column)
-						vscode.window.activeTextEditor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenterIfOutsideViewport)
+						editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenterIfOutsideViewport)
 						return null
 					}
 				}
@@ -244,12 +244,12 @@ class FileItem implements Item {
 
 			let snippet = `url(${quote}${path}${quote})`
 
-			const position = vscode.window.activeTextEditor.selection.active
+			const position = editor.selection.active
 			if (position.character > 1 && /\w/.test(document.getText(new vscode.Range(position.translate(0, -1), position)))) {
 				snippet = ' ' + snippet
 			}
 
-			await editor.edit(worker => worker.insert(vscode.window.activeTextEditor.selection.active, snippet))
+			await editor.edit(worker => worker.insert(editor.selection.active, snippet))
 		}
 	}
 }
