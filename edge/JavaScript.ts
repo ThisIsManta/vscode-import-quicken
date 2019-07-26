@@ -1229,17 +1229,21 @@ async function guessModuleImport(moduleName: string, codeTree: ts.SourceFile, st
 	return matchNearbyFiles(codeTree.fileName, (...args) => guessModuleImport(moduleName, ...args), null)
 }
 
-const indexFilePattern = /(\\|\/)index(\.\w+)?$/
+const indexFilePattern = /(\\|\/)index(\.(j|t)sx?)?$/
 
 async function guessIndexFileExclusion(indexFileInfo: FileInfo, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<boolean> {
-	const existingImports = getExistingImports(codeTree)
-	for (const { path } of existingImports) {
-		if (indexFileInfo.directoryPath === fp.resolve(fp.dirname(codeTree.fileName), path)) {
-			return true
-		}
+	const existingImports = getExistingImports(codeTree).filter(({ path }) => path.startsWith('../'))
 
+	for (const { path } of existingImports) {
 		if (indexFilePattern.test(path)) {
 			return false
+		}
+	}
+
+	for (const { path } of existingImports) {
+		const fullPath = await tryGetFullPath([indexFileInfo.directoryPath, path], indexFileInfo.fileExtensionWithoutLeadingDot)
+		if (indexFilePattern.test(fullPath)) {
+			return true
 		}
 	}
 
