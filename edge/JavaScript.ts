@@ -1275,17 +1275,17 @@ async function guessFileExtensionExclusion(fileExtensionWithoutLeadingDot: strin
 }
 
 async function guessQuoteCharacter(codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
-	const chars = findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node)).map(node => node.getText().trim().charAt(0))
-	if (chars.length > 0) {
-		const singleQuoteCount = chars.filter(char => char === "'").length
-		const doubleQuoteCount = chars.filter(char => char === '"').length
-		if (singleQuoteCount > doubleQuoteCount) {
-			return "'"
-		} else if (doubleQuoteCount > singleQuoteCount) {
-			return '"'
-		} else {
-			return chars[0]
+	const existingImports = getExistingImports(codeTree)
+	if (existingImports.length > 0) {
+		const nodes = findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node))
+		if (nodes.length > 0) {
+			return nodes[0].getText().trim().charAt(0)
 		}
+	}
+
+	const nodes = findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node))
+	if (nodes.length > 0) {
+		return nodes[0].getText().trim().charAt(0)
 	}
 
 	if (stopPropagation) {
