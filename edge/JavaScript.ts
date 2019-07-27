@@ -303,19 +303,19 @@ export default class JavaScript implements Language {
 				return null
 			}
 
-			/* const matchingFullPaths = await item.search()
+			const matchingFullPaths = await item.search()
 			if (matchingFullPaths.length === 0) {
 				nonResolvableImports.push(item)
 	
 			} else if (matchingFullPaths.length === 1) {
+				const path = await new FileItem(matchingFullPaths[0]).getRelativePath(codeTree, document)
 				await editor.edit(worker => {
-					const path = new FileItem(matchingFullPaths[0], rootPath, this).getRelativePath(document)
 					worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
 				})
 	
 			} else {
 				manualSolvableImports.push(item)
-			} */
+			}
 		}
 
 		for (const item of manualSolvableImports) {
@@ -331,10 +331,10 @@ export default class JavaScript implements Language {
 				return null
 			}
 
-			/* await editor.edit(worker => {
-				const path = new FileItem(selectedItem.fullPath, rootPath, this).getRelativePath(document)
+			const path = await new FileItem(selectedItem.fullPath).getRelativePath(codeTree, document)
+			await editor.edit(worker => {
 				worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
-			}) */
+			})
 		}
 
 		await JavaScript.fixESLint()
