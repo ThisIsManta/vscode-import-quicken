@@ -22,7 +22,7 @@
     },
     "icon": "docs/logo.png",
     "galleryBanner": {
-        "color": "#c6ff00",
+        "color": "#212121",
         "theme": "dark"
     },
     "engines": {
