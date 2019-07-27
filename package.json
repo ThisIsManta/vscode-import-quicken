@@ -20,8 +20,9 @@
     "bugs": {
         "url": "https://github.com/ThisIsManta/vscode-import-quicken/issues"
     },
+    "icon": "docs/logo.png",
     "galleryBanner": {
-        "color": "#212121",
+        "color": "#c6ff00",
         "theme": "dark"
     },
     "engines": {
