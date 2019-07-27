@@ -23,6 +23,7 @@ const nodeItemCache = new Map<PackageJsonPath, Array<NodeItem>>()
 
 export default class JavaScript implements Language {
 	private fileItemCache: Array<FileItem>
+	private identifierCache = new Map<FilePath, IdentifierMap>()
 
 	public configs: JavaScriptConfigurations
 
@@ -38,13 +39,13 @@ export default class JavaScript implements Language {
 		return true
 	}
 
-	private async tryGetIdentifiers(filePath: string, identifierCache?: Map<FilePath, IdentifierMap>) {
+	private async tryGetIdentifiers(filePath: string) {
 		if (SUPPORTED_EXTENSION.test(filePath)) {
 			const codeTree = await JavaScript.parse(filePath)
 
 			await this.setImportCache(codeTree)
 
-			const identifiers = Array.from(await getExportedIdentifiers(codeTree, identifierCache))
+			const identifiers = Array.from(await getExportedIdentifiers(codeTree, this.identifierCache))
 			return _.chain(identifiers)
 				.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
 				.map(([name, { sourceText: text }]) => new IdentifierItem(filePath, name, text))
@@ -105,9 +106,8 @@ export default class JavaScript implements Language {
 					.value()
 
 				this.fileItemCache = []
-				const identifierCache = new Map<FilePath, IdentifierMap>()
 				for (const link of fileLinks) {
-					this.fileItemCache.push(...await this.tryGetIdentifiers(link.fsPath, identifierCache))
+					this.fileItemCache.push(...await this.tryGetIdentifiers(link.fsPath))
 				}
 				const nonWordInitials = /^\W*/
 				this.fileItemCache = _.sortBy(this.fileItemCache,
@@ -185,6 +185,8 @@ export default class JavaScript implements Language {
 	}
 
 	cutItem(filePath: string) {
+		this.identifierCache.delete(filePath)
+
 		if (this.fileItemCache) {
 			this.fileItemCache = this.fileItemCache.filter(file => file.info.fullPath !== filePath)
 		}

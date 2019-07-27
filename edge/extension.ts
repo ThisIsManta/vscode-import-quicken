@@ -3,6 +3,7 @@ import * as _ from 'lodash'
 import * as vscode from 'vscode'
 
 import { ExtensionLevelConfigurations, Language, Item } from './global'
+import { createFileChangeQueue } from './FileChangeQueue'
 import JavaScript from './JavaScript'
 import TypeScript from './TypeScript'
 import Stylus from './Stylus'
@@ -12,52 +13,42 @@ let languages: Array<Language>
 export function activate(context: vscode.ExtensionContext) {
     const fileWatch = vscode.workspace.createFileSystemWatcher('**/*')
     context.subscriptions.push(fileWatch)
-    const fileChangeList = new Set<string>()
-    const propagateFileChange = _.debounce(async () => {
-        for (const filePath of Array.from(fileChangeList)) {
-            if (vscode.window.activeTextEditor && filePath === vscode.window.activeTextEditor.document.uri.fsPath) {
-                continue
+
+    const fileChanges = createFileChangeQueue(async ({ filePath, removed }) => {
+        await Promise.all(languages.map(async language => {
+            if (language.cutItem) {
+                await language.cutItem(filePath)
             }
 
-            if (filePath.split(/\\|\//).includes('.git')) {
-                continue
+            if (!removed && language.addItem) {
+                await language.addItem(filePath)
             }
 
-            const fileExists = await fs.exists(filePath)
-            if (fileExists && (await fs.lstat(filePath)).isFile() === false) {
-                continue
+            if (!language.cutItem && !language.addItem) {
+                await language.reset()
             }
+        }))
+    })
 
-            await Promise.all(languages.map(async language => {
-                if (language.cutItem) {
-                    await language.cutItem(filePath)
-                }
-
-                if (fileExists && language.addItem) {
-                    await language.addItem(filePath)
-                }
-
-                if (!language.cutItem && !language.addItem) {
-                    await language.reset()
-                }
-            }))
-
-            fileChangeList.delete(filePath)
-        }
-    }, 1500)
     context.subscriptions.push(fileWatch.onDidCreate(e => {
-        fileChangeList.add(e.fsPath)
-        propagateFileChange()
+        fileChanges.add(e.fsPath)
     }))
     context.subscriptions.push(fileWatch.onDidDelete(e => {
-        fileChangeList.add(e.fsPath)
-        propagateFileChange()
+        fileChanges.remove(e.fsPath)
     }))
     context.subscriptions.push(fileWatch.onDidChange(e => {
-        fileChangeList.add(e.fsPath)
-        propagateFileChange()
+        if (vscode.window.activeTextEditor && e.fsPath === vscode.window.activeTextEditor.document.uri.fsPath) {
+            return
+        }
+
+        fileChanges.add(e.fsPath)
     }))
-    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(propagateFileChange))
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => {
+        if (vscode.window.activeTextEditor) {
+            fileChanges.add(vscode.window.activeTextEditor.document.uri.fsPath)
+            fileChanges.process()
+        }
+    }))
 
     let config: ExtensionLevelConfigurations
     let extensionIsInitializing = true
