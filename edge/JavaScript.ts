@@ -1261,16 +1261,20 @@ async function guessFileExtensionExclusion(fileExtensionWithoutLeadingDot: strin
 		return false
 	}
 
-	const existingImports = getExistingImports(codeTree)
-	for (const { path } of existingImports) {
-		if (SUPPORTED_EXTENSION.test(path)) {
-			return false
+	const existingImports = getExistingImports(codeTree).filter(({ path }) => /^\.\.?\//.test(path))
+	if (existingImports.length > 0) {
+		for (const { path } of existingImports) {
+			if (SUPPORTED_EXTENSION.test(path)) {
+				return false
+			}
+
+			const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fileExtensionWithoutLeadingDot)
+			if (fullPath && _.last(fullPath.split(fp.sep)) === _.last(path.split('/'))) {
+				return false
+			}
 		}
 
-		const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fileExtensionWithoutLeadingDot)
-		if (SUPPORTED_EXTENSION.test(fullPath)) {
-			return SUPPORTED_EXTENSION.test(path) === false
-		}
+		return true
 	}
 
 	if (stopPropagation) {
