@@ -163,8 +163,8 @@ export default class JavaScript implements Language {
 		await this.setItems()
 
 		const packageJsonList = await getPackageJsonList()
-		const { packageJsonPath } = getClosestPackageJson(document.fileName, packageJsonList)
-		const nodeItems = nodeItemCache.get(packageJsonPath) || []
+		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
+		const nodeItems = packageJson && nodeItemCache.get(packageJson.packageJsonPath) || []
 
 		return [
 			...this.fileItemCache,
@@ -306,13 +306,13 @@ export default class JavaScript implements Language {
 			const matchingFullPaths = await item.search()
 			if (matchingFullPaths.length === 0) {
 				nonResolvableImports.push(item)
-	
+
 			} else if (matchingFullPaths.length === 1) {
 				const path = await new FileItem(matchingFullPaths[0]).getRelativePath(codeTree, document)
 				await editor.edit(worker => {
 					worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
 				})
-	
+
 			} else {
 				manualSolvableImports.push(item)
 			}
@@ -1012,13 +1012,13 @@ class NodeItem implements Item {
 
 	private async getTypeDefinitions(document: vscode.TextDocument) {
 		const packageJsonList = await getPackageJsonList()
-		const { nodeModulePathList } = getClosestPackageJson(document.fileName, packageJsonList)
-		if (!nodeModulePathList) {
+		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
+		if (!packageJson || !packageJson.nodeModulePathList) {
 			return []
 		}
 
 		const getDefinitionPath = async () => {
-			for (const path of nodeModulePathList) {
+			for (const path of packageJson.nodeModulePathList) {
 				const fullPath = fp.join(path, 'node_modules', '@types/' + this.label, 'index.d.ts')
 				if (await fs.exists(fullPath)) {
 					return fullPath
@@ -1491,14 +1491,19 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 					})
 				}
 
-			} else if (ts.isExportAssignment(node) && ts.isIdentifier(node.expression)) {
-				// export default named
-				const name = node.expression.text
-				if (importedNames.has(name)) {
-					const { originalName, sourceText, pathList } = importedNames.get(name)
-					exportedNames.set('*default', { originalName, sourceText, pathList: [filePath, ...pathList] })
+			} else if (ts.isExportAssignment(node)) {
+				if (ts.isIdentifier(node.expression)) {
+					// export default named
+					const name = node.expression.text
+					if (importedNames.has(name)) {
+						const { originalName, sourceText, pathList } = importedNames.get(name)
+						exportedNames.set('*default', { originalName, sourceText, pathList: [filePath, ...pathList] })
+					} else {
+						exportedNames.set('*default', { originalName: name, sourceText: node.getText(), pathList: [filePath] })
+					}
 				} else {
-					exportedNames.set('*default', { originalName: name, sourceText: node.getText(), pathList: [filePath] })
+					// export default {}
+					exportedNames.set('*default', { sourceText: node.getText(), pathList: [filePath] })
 				}
 
 			} else if (
