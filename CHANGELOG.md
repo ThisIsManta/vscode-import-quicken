@@ -1,3 +1,6 @@
+### 1.1.2
+- Fix the problem with JavaScript bundler.
+
 ### 1.1.1
 - Fix missing initial progress status.
 - Fix the error while processing file change.
