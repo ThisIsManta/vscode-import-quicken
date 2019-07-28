@@ -3,9 +3,6 @@ import { fs } from 'mz'
 export function createFileChangeQueue(onFileChange: ({ filePath: string, removed: boolean }) => Promise<void>) {
 	const fileChangeList: Array<{ filePath: string, removed: boolean }> = []
 
-	let lastTimeout: NodeJS.Timeout = null
-	let processing = false
-
 	function push(filePath: string, removed: boolean) {
 		if (filePath.split(/\\|\//).includes('.git')) {
 			return
@@ -22,15 +19,10 @@ export function createFileChangeQueue(onFileChange: ({ filePath: string, removed
 		} else {
 			fileChangeList.push({ filePath, removed })
 		}
-
-		if (processing) {
-			return
-		}
-
-		clearTimeout(lastTimeout)
-
-		lastTimeout = setTimeout(process, 1000)
 	}
+
+	let lastTimeout: NodeJS.Timeout = null
+	let processing = false
 
 	async function process() {
 		if (processing) {
@@ -50,6 +42,16 @@ export function createFileChangeQueue(onFileChange: ({ filePath: string, removed
 	return {
 		add: (filePath: string) => push(filePath, false),
 		remove: (filePath: string) => push(filePath, true),
-		process,
+		processLazily: () => {
+			if (processing) {
+				return
+			}
+
+			clearTimeout(lastTimeout)
+			lastTimeout = setTimeout(process, 1000)
+		},
+		processImmediately: () => {
+			process()
+		},
 	}
 }

@@ -88,64 +88,64 @@ export default class JavaScript implements Language {
 
 	private workingThread: Promise<void>
 	setItems() {
-		if (this.workingThread) {
-			return this.workingThread
-		}
+		if (!this.workingThread) {
+			this.workingThread = new Promise(async resolve => {
+				if (!this.fileCache) {
+					const fileLinks = _.chain(await vscode.workspace.findFiles('**/*'))
+						.filter(await this.createLanguageSpecificFileFilter())
+						.value()
 
-		this.workingThread = new Promise(async resolve => {
-			if (!this.fileCache) {
-				const fileLinks = _.chain(await vscode.workspace.findFiles('**/*'))
-					.filter(await this.createLanguageSpecificFileFilter())
-					.value()
-
-				this.fileCache = []
-				for (const link of fileLinks) {
-					this.fileCache.push(...await this.tryGetIdentifiers(link.fsPath))
-				}
-				const nonWordInitials = /^\W*/
-				this.fileCache = _.sortBy(this.fileCache,
-					item => SUPPORTED_EXTENSION.test(item.info.fileNameWithExtension) ? 0 : 1,
-					item => item.info.fileNameWithExtension.replace(nonWordInitials, ''),
-					item => item instanceof IdentifierItem ? item.name.toLowerCase() : '',
-				)
-			}
-
-			const packageJsonList = await getPackageJsonList()
-			for (const { packageJsonPath, nodeModulePathList } of packageJsonList) {
-				if (nodeItemCache.has(packageJsonPath)) {
-					continue
+					this.fileCache = []
+					for (const link of fileLinks) {
+						this.fileCache.push(...await this.tryGetIdentifiers(link.fsPath))
+					}
+					const nonWordInitials = /^\W*/
+					this.fileCache = _.sortBy(this.fileCache,
+						item => SUPPORTED_EXTENSION.test(item.info.fileNameWithExtension) ? 0 : 1,
+						item => item.info.fileNameWithExtension.replace(nonWordInitials, ''),
+						item => item instanceof IdentifierItem ? item.name.toLowerCase() : '',
+					)
 				}
 
-				const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-				const dependencyNameList = _.chain([packageJson.devDependencies, packageJson.dependencies])
-					.map(_.keys)
-					.flatten()
-					.value()
-
-				let nodeJsAPIs: Array<NodeItem> = []
-				if (dependencyNameList.some(name => name === '@types/node')) {
-					const nodeJsVersion = await getLocalModuleVersion('@types/node', nodeModulePathList)
-					nodeJsAPIs = (await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeItem(name, nodeJsVersion))
-				}
-
-				const dependencyItemList: Array<NodeItem> = []
-				for (const name of dependencyNameList) {
-					if (name.startsWith('@types/')) {
+				const packageJsonList = await getPackageJsonList()
+				for (const { packageJsonPath, nodeModulePathList } of packageJsonList) {
+					if (nodeItemCache.has(packageJsonPath)) {
 						continue
 					}
 
-					dependencyItemList.push(new NodeItem(name, await getLocalModuleVersion(name, nodeModulePathList)))
+					const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+					const dependencyNameList = _.chain([packageJson.devDependencies, packageJson.dependencies])
+						.map(_.keys)
+						.flatten()
+						.value()
+
+					let nodeJsAPIs: Array<NodeItem> = []
+					if (dependencyNameList.some(name => name === '@types/node')) {
+						const nodeJsVersion = await getLocalModuleVersion('@types/node', nodeModulePathList)
+						nodeJsAPIs = (await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeItem(name, nodeJsVersion))
+					}
+
+					const dependencyItemList: Array<NodeItem> = []
+					for (const name of dependencyNameList) {
+						if (name.startsWith('@types/')) {
+							continue
+						}
+
+						dependencyItemList.push(new NodeItem(name, await getLocalModuleVersion(name, nodeModulePathList)))
+					}
+
+					nodeItemCache.set(
+						packageJsonPath,
+						_.sortBy([...dependencyItemList, ...nodeJsAPIs], item => item.label)
+					)
 				}
 
-				nodeItemCache.set(
-					packageJsonPath,
-					_.sortBy([...dependencyItemList, ...nodeJsAPIs], item => item.label)
-				)
-			}
+				this.workingThread = null
+				resolve()
+			})
+		}
 
-			this.workingThread = null
-			resolve()
-		})
+		return this.workingThread
 	}
 
 	async getItems(document: vscode.TextDocument) {

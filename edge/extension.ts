@@ -10,7 +10,9 @@ import Stylus from './Stylus'
 
 let languages: Array<Language>
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
+    let preparingFiles = true
+
     const fileWatch = vscode.workspace.createFileSystemWatcher('**/*')
     context.subscriptions.push(fileWatch)
 
@@ -32,30 +34,40 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(fileWatch.onDidCreate(e => {
         fileChanges.add(e.fsPath)
+        if (preparingFiles === false) {
+            fileChanges.processLazily()
+        }
     }))
     context.subscriptions.push(fileWatch.onDidDelete(e => {
         fileChanges.remove(e.fsPath)
+        if (preparingFiles === false) {
+            fileChanges.processLazily()
+        }
     }))
+    const recentlyChangedActiveFileList = new Set<string>()
     context.subscriptions.push(fileWatch.onDidChange(e => {
         if (vscode.window.activeTextEditor && e.fsPath === vscode.window.activeTextEditor.document.uri.fsPath) {
+            recentlyChangedActiveFileList.add(e.fsPath)
             return
         }
 
         fileChanges.add(e.fsPath)
+        if (preparingFiles === false) {
+            fileChanges.processLazily()
+        }
     }))
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => {
-        if (vscode.window.activeTextEditor) {
-            fileChanges.add(vscode.window.activeTextEditor.document.uri.fsPath)
-            fileChanges.process()
+        if (recentlyChangedActiveFileList.size > 0) {
+            for (const filePath of recentlyChangedActiveFileList) {
+                fileChanges.add(filePath)
+            }
+            recentlyChangedActiveFileList.clear()
+            fileChanges.processImmediately()
         }
     }))
 
-    let config: ExtensionLevelConfigurations
-    let extensionIsInitializing = true
     function initialize() {
-        extensionIsInitializing = true
-
-        config = vscode.workspace.getConfiguration().get<ExtensionLevelConfigurations>('importQuicken')
+        const config = vscode.workspace.getConfiguration().get<ExtensionLevelConfigurations>('importQuicken')
 
         if (languages) {
             for (const language of languages) {
@@ -69,23 +81,23 @@ export function activate(context: vscode.ExtensionContext) {
             new JavaScript(config),
             new Stylus(config),
         ]
-
-        extensionIsInitializing = false
     }
     initialize()
 
-    vscode.window.withProgress({ title: 'Import Quicken is preparing files...', location: vscode.ProgressLocation.Window }, () =>
-        Promise.all(_.compact(languages.map(language =>
+    await vscode.window.withProgress({ title: 'Import Quicken is preparing files...', location: vscode.ProgressLocation.Window }, async () => {
+        await Promise.all(_.compact(languages.map(language =>
             language.setItems
                 ? language.setItems()
                 : null
         )))
-    )
+
+        preparingFiles = false
+
+        fileChanges.processImmediately()
+    })
 
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(() => {
-        if (!extensionIsInitializing) {
-            initialize()
-        }
+        initialize()
     }))
 
     context.subscriptions.push(vscode.commands.registerCommand('importQuicken.addImport', async function () {
@@ -98,7 +110,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Show the progress bar if the operation takes too long
-        let progressIsVisible = !extensionIsInitializing
+        let progressIsVisible = !preparingFiles
         let hideProgress = () => { progressIsVisible = false }
         setTimeout(() => {
             if (!progressIsVisible) {
