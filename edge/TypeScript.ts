@@ -15,10 +15,10 @@ export default class TypeScript extends JavaScript {
 			...extensionLevelConfig,
 			javascript: {
 				...extensionLevelConfig.javascript,
-				exclude: _.uniq([
-					...extensionLevelConfig.javascript.exclude,
-					...extensionLevelConfig.typescript.exclude,
-				]),
+				filter: {
+					...extensionLevelConfig.javascript.filter,
+					...extensionLevelConfig.typescript.filter,
+				},
 			}
 		})
 	}

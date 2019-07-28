@@ -109,7 +109,7 @@ export function activate(context: vscode.ExtensionContext) {
                     hideProgress = resolve
                 })
             })
-        }, 150)
+        }, 1500)
 
         for (let language of languages) {
             const items = await language.getItems(document)

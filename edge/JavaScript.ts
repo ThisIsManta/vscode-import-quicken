@@ -9,7 +9,7 @@ import { ExtensionLevelConfigurations, Language, Item, findFilesRoughly, hasFile
 import FileInfo from './FileInfo'
 
 export interface JavaScriptConfigurations {
-	exclude: ReadonlyArray<string>
+	filter: Readonly<{ [key: string]: string }>
 }
 
 const SUPPORTED_EXTENSION = /\.(j|t)sx?$/i
@@ -22,7 +22,7 @@ const namespaceImportCache = new Map<FilePath, string>()
 const nodeItemCache = new Map<PackageJsonPath, Array<NodeItem>>()
 
 export default class JavaScript implements Language {
-	private fileItemCache: Array<FileItem>
+	private fileCache: Array<FileItem>
 	private identifierCache = new Map<FilePath, IdentifierMap>()
 
 	public configs: JavaScriptConfigurations
@@ -93,24 +93,17 @@ export default class JavaScript implements Language {
 		}
 
 		this.workingThread = new Promise(async resolve => {
-			if (!this.fileItemCache) {
-				const fileExclusionList = this.configs.exclude.map(pattern => new RegExp(pattern))
-
+			if (!this.fileCache) {
 				const fileLinks = _.chain(await vscode.workspace.findFiles('**/*'))
 					.filter(await this.createLanguageSpecificFileFilter())
-					.reject(fileLink => {
-						const rootLink = vscode.workspace.getWorkspaceFolder(fileLink)
-						const workPath = _.trimStart(fileLink.fsPath.substring(rootLink.uri.fsPath.length), fp.sep)
-						return fileExclusionList.some(pattern => pattern.test(workPath))
-					})
 					.value()
 
-				this.fileItemCache = []
+				this.fileCache = []
 				for (const link of fileLinks) {
-					this.fileItemCache.push(...await this.tryGetIdentifiers(link.fsPath))
+					this.fileCache.push(...await this.tryGetIdentifiers(link.fsPath))
 				}
 				const nonWordInitials = /^\W*/
-				this.fileItemCache = _.sortBy(this.fileItemCache,
+				this.fileCache = _.sortBy(this.fileCache,
 					item => SUPPORTED_EXTENSION.test(item.info.fileNameWithExtension) ? 0 : 1,
 					item => item.info.fileNameWithExtension.replace(nonWordInitials, ''),
 					item => item instanceof IdentifierItem ? item.name.toLowerCase() : '',
@@ -162,19 +155,34 @@ export default class JavaScript implements Language {
 
 		await this.setItems()
 
+		const fileItems = (() => {
+			const workPath = _.trimStart(document.fileName.substring(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath.length).replace(/\\/g, fp.posix.sep), fp.posix.sep)
+			const TM_FILENAME_BASE = _.escapeRegExp(fp.basename(document.fileName).replace(/\..+/, ''))
+
+			for (const key in this.configs.filter) {
+				const sourceMatcher = new RegExp(key)
+				if (sourceMatcher.test(workPath)) {
+					const targetMatcher = new RegExp(this.configs.filter[key].replace('${TM_FILENAME_BASE}', TM_FILENAME_BASE))
+					return this.fileCache.filter(file => targetMatcher.test(file.info.fullPathForPOSIX))
+				}
+			}
+
+			return this.fileCache
+		})()
+
 		const packageJsonList = await getPackageJsonList()
 		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
 		const nodeItems = packageJson && nodeItemCache.get(packageJson.packageJsonPath) || []
 
 		return [
-			...this.fileItemCache,
+			...fileItems,
 			...nodeItems
 		]
 	}
 
 	async addItem(filePath: string) {
-		if (this.fileItemCache) {
-			this.fileItemCache.push(...await this.tryGetIdentifiers(filePath))
+		if (this.fileCache) {
+			this.fileCache.push(...await this.tryGetIdentifiers(filePath))
 		}
 
 		if (fp.basename(filePath) === 'package.json') {
@@ -187,8 +195,8 @@ export default class JavaScript implements Language {
 	cutItem(filePath: string) {
 		this.identifierCache.delete(filePath)
 
-		if (this.fileItemCache) {
-			this.fileItemCache = this.fileItemCache.filter(file => file.info.fullPath !== filePath)
+		if (this.fileCache) {
+			this.fileCache = this.fileCache.filter(file => file.info.fullPath !== filePath)
 		}
 
 		if (fp.basename(filePath) === 'package.json') {
@@ -350,7 +358,7 @@ export default class JavaScript implements Language {
 	}
 
 	reset() {
-		this.fileItemCache = null
+		this.fileCache = null
 		nodeItemCache.clear()
 		namespaceImportCache.clear()
 		defaultImportCache.clear()
