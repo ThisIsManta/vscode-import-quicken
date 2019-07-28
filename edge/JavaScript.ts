@@ -1347,6 +1347,10 @@ async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer',
 
 	const lineEnding = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
 
+	if (/^typescript(react)?$/.test(document.languageId)) {
+		syntax = 'import'
+	}
+
 	if (syntax === 'import' || syntax === 'infer' && await guessImportSyntax(codeTree)) {
 		if (!kind || !name) {
 			return `import ${quote}${path}${quote}` + statementEnding + lineEnding
