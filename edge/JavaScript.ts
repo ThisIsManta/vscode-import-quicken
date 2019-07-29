@@ -40,6 +40,10 @@ export default class JavaScript implements Language {
 	}
 
 	private async tryGetIdentifiers(filePath: string) {
+		if (/(\\|\/)/.test(filePath) === false) {
+			return []
+		}
+
 		if (SUPPORTED_EXTENSION.test(filePath)) {
 			const codeTree = await JavaScript.parse(filePath)
 
@@ -517,8 +521,13 @@ class FileItem implements Item {
 
 		this.label = this.info.fileNameWithExtension
 
-		const workspaceDirectory = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath)).uri.fsPath
-		this.description = _.trim(this.info.fullPath.substring(workspaceDirectory.length), fp.sep)
+		const workspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))
+		if (workspace) {
+			const workspaceDirectory = workspace.uri.fsPath
+			this.description = _.trim(this.info.directoryPath.substring(workspaceDirectory.length), fp.sep)
+		} else {
+			this.description = this.info.directoryPath
+		}
 	}
 
 	async addImport(editor: vscode.TextEditor) {

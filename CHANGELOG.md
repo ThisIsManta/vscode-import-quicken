@@ -1,3 +1,6 @@
+### 1.1.3
+- Fix the error when the processing file does not belong to any workspace.
+
 ### 1.1.2
 - Fix the problem with JavaScript bundler.
 
