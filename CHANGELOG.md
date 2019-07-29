@@ -1,3 +1,6 @@
+### 1.1.4
+- Fix unable to list recently changed identifiers.
+
 ### 1.1.3
 - Fix the error when the processing file does not belong to any workspace.
 

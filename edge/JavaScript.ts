@@ -49,6 +49,8 @@ export default class JavaScript implements Language {
 
 			await this.setImportCache(codeTree)
 
+			this.identifierCache.delete(filePath)
+
 			const identifiers = Array.from(await getExportedIdentifiers(codeTree, this.identifierCache))
 			return _.chain(identifiers)
 				.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
