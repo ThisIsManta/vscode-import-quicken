@@ -8,7 +8,7 @@ export function createFileChangeQueue(onFileChange: ({ filePath: string, removed
 			return
 		}
 
-		if (fs.existsSync(filePath) === false || fs.lstatSync(filePath).isDirectory()) {
+		if (fs.existsSync(filePath) && fs.lstatSync(filePath).isDirectory()) {
 			return
 		}
 

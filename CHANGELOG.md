@@ -1,3 +1,6 @@
+### 1.1.5
+- Fix stale identifier cache for deleted files.
+
 ### 1.1.4
 - Fix unable to list recently changed identifiers.
 
