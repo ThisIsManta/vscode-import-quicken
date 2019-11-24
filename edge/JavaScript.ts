@@ -921,8 +921,7 @@ class NodeItem implements Item {
 			return null
 		}
 
-		const moduleName = await guessModuleImport(this.path, codeTree) ||
-			_.words(_.last(this.path.split('/'))).map(_.upperFirst).join('')
+		const autoName = _.words(_.last(this.path.split('/'))).map(_.upperFirst).join('')
 
 		const existingImports = getExistingImports(codeTree)
 		const duplicateImport = existingImports.find(item => item.path === this.path)
@@ -959,7 +958,7 @@ class NodeItem implements Item {
 				} else if (duplicateImport.node.importClause.namedBindings && ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 					// Try merging `default` with `{ named }`
 					const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
-					await editor.edit(worker => worker.insert(position, moduleName + ', '))
+					await editor.edit(worker => worker.insert(position, (defaultImportCache.get(this.path) || autoName) + ', '))
 					await JavaScript.fixESLint()
 					return null
 				}
@@ -997,13 +996,15 @@ class NodeItem implements Item {
 			}
 		}
 
-		let name = moduleName
 		let kind: ImportKind = null
+		let name = autoName
 		if (typeDefinitions.length === 0) {
 			if (importDefaultIsPreferred) {
 				kind = 'default'
+				name = defaultImportCache.get(this.path) || autoName
 			} else {
 				kind = 'namespace'
+				name = namespaceImportCache.get(this.path) || autoName
 			}
 
 		} else {
@@ -1016,8 +1017,10 @@ class NodeItem implements Item {
 			}
 			if (select === 'default') {
 				kind = 'default'
+				name = defaultImportCache.get(this.path) || autoName
 			} else if (select === '*') {
 				kind = 'namespace'
+				name = namespaceImportCache.get(this.path) || autoName
 			} else {
 				kind = 'named'
 				name = select
@@ -1223,38 +1226,6 @@ async function matchNearbyFiles<T>(filePath: string, matcher: (codeTree: ts.Sour
 	} while (workingDirectoryParts.length > 0)
 
 	return defaultValue
-}
-
-async function guessModuleImport(moduleName: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
-	const existingImports = getExistingImports(codeTree)
-	const matchingImport = existingImports.find(stub => stub.path === moduleName)
-	if (matchingImport) {
-		const { node } = matchingImport
-
-		if (
-			ts.isImportDeclaration(node) &&
-			node.importClause &&
-			node.importClause.name &&
-			ts.isIdentifier(node.importClause.name)
-		) {
-			return node.importClause.name.text
-		}
-
-		if (
-			ts.isImportDeclaration(node) &&
-			node.importClause &&
-			node.importClause.namedBindings &&
-			ts.isNamespaceImport(node.importClause.namedBindings)
-		) {
-			return node.importClause.namedBindings.name.text
-		}
-	}
-
-	if (stopPropagation) {
-		return null
-	}
-
-	return matchNearbyFiles(codeTree.fileName, (...args) => guessModuleImport(moduleName, ...args), null)
 }
 
 const indexFilePattern = /(\\|\/)index(\.(j|t)sx?)?$/
