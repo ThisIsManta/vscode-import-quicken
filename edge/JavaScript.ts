@@ -1037,7 +1037,8 @@ class NodeItem implements Item {
 		}
 
 		const getDefinitionPath = async () => {
-			for (const path of packageJson.nodeModulePathList) {
+			// Traverse through the deepest `node_modules` first
+			for (const path of _.sortBy(packageJson.nodeModulePathList).reverse()) {
 				const fullPath = fp.join(path, 'node_modules', '@types/' + this.label, 'index.d.ts')
 				if (await fs.exists(fullPath)) {
 					return fullPath
@@ -1081,7 +1082,13 @@ class NodeItem implements Item {
 					ts.isModuleBlock(node.body)
 				)).forEach(({ body }) => {
 					body.forEachChild((node: any) => {
-						if (node.name) {
+						if (ts.isVariableStatement(node)) {
+							for (const stub of node.declarationList.declarations) {
+								if (ts.isVariableDeclaration(stub) && ts.isIdentifier(stub.name)) {
+									typeDefinitions.push(stub.name.text)
+								}
+							}
+						} else if (node.name) {
 							typeDefinitions.push(node.name.text)
 						}
 					})
