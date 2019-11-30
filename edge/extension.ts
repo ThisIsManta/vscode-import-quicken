@@ -1,4 +1,3 @@
-import { fs } from 'mz'
 import * as _ from 'lodash'
 import * as vscode from 'vscode'
 
@@ -10,8 +9,51 @@ import Stylus from './Stylus'
 
 let languages: Array<Language>
 
-export async function activate(context: vscode.ExtensionContext) {
-    let preparingFiles = true
+function initialize() {
+    const config = vscode.workspace.getConfiguration().get<ExtensionLevelConfigurations>('importQuicken')
+
+    if (languages) {
+        for (const language of languages) {
+            language.reset()
+        }
+    }
+
+    languages = [
+        // Add new supported languages here
+        new TypeScript(config),
+        new JavaScript(config),
+        new Stylus(config),
+    ]
+}
+
+// Do not `await` in this function body as all the commands must be registered quickly
+export function activate(context: vscode.ExtensionContext) {
+    initialize()
+
+    let initializing = true
+
+    vscode.window.withProgress({ title: 'Preparing Import Quicken', location: vscode.ProgressLocation.Window }, async () => {
+        await Promise.all(_.compact(languages.map(language =>
+            language.setItems
+                ? language.setItems()
+                : null
+        )))
+
+        initializing = false
+
+        fileChanges.processImmediately()
+    })
+
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(() => {
+        if (initializing) {
+            return
+        }
+        
+        initialize()
+    }))
+
+    const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*')
+    context.subscriptions.push(fileWatcher)
 
     const fileChanges = new FileChangeQueue(async ({ filePath, removed }) => {
         await Promise.all(languages.map(async language => {
@@ -30,27 +72,27 @@ export async function activate(context: vscode.ExtensionContext) {
     })
     context.subscriptions.push(fileChanges)
 
-    context.subscriptions.push(fileWatch.onDidCreate(e => {
+    context.subscriptions.push(fileWatcher.onDidCreate(e => {
         fileChanges.add(e.fsPath)
-        if (preparingFiles === false) {
+        if (initializing === false) {
             fileChanges.processLazily()
         }
     }))
-    context.subscriptions.push(fileWatch.onDidDelete(e => {
+    context.subscriptions.push(fileWatcher.onDidDelete(e => {
         fileChanges.remove(e.fsPath)
-        if (preparingFiles === false) {
+        if (initializing === false) {
             fileChanges.processLazily()
         }
     }))
     const recentlyChangedActiveFileList = new Set<string>()
-    context.subscriptions.push(fileWatch.onDidChange(e => {
+    context.subscriptions.push(fileWatcher.onDidChange(e => {
         if (vscode.window.activeTextEditor && e.fsPath === vscode.window.activeTextEditor.document.uri.fsPath) {
             recentlyChangedActiveFileList.add(e.fsPath)
             return
         }
 
         fileChanges.add(e.fsPath)
-        if (preparingFiles === false) {
+        if (initializing === false) {
             fileChanges.processLazily()
         }
     }))
@@ -64,40 +106,6 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }))
 
-    function initialize() {
-        const config = vscode.workspace.getConfiguration().get<ExtensionLevelConfigurations>('importQuicken')
-
-        if (languages) {
-            for (const language of languages) {
-                language.reset()
-            }
-        }
-
-        languages = [
-            // Add new supported languages here
-            new TypeScript(config),
-            new JavaScript(config),
-            new Stylus(config),
-        ]
-    }
-    initialize()
-
-    await vscode.window.withProgress({ title: 'Import Quicken is preparing files...', location: vscode.ProgressLocation.Window }, async () => {
-        await Promise.all(_.compact(languages.map(language =>
-            language.setItems
-                ? language.setItems()
-                : null
-        )))
-
-        preparingFiles = false
-
-        fileChanges.processImmediately()
-    })
-
-    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(() => {
-        initialize()
-    }))
-
     context.subscriptions.push(vscode.commands.registerCommand('importQuicken.addImport', async function () {
         const editor = vscode.window.activeTextEditor
         const document = editor && editor.document
@@ -108,13 +116,13 @@ export async function activate(context: vscode.ExtensionContext) {
         }
 
         // Show the progress bar if the operation takes too long
-        let progressIsVisible = !preparingFiles
+        let progressIsVisible = !initializing
         let hideProgress = () => { progressIsVisible = false }
         setTimeout(() => {
-            if (!progressIsVisible) {
+            if (progressIsVisible === false) {
                 return
             }
-            vscode.window.withProgress({ title: 'Import Quicken is populating files...', location: vscode.ProgressLocation.Window }, async () => {
+            vscode.window.withProgress({ title: 'Scanning files...', location: vscode.ProgressLocation.Notification }, async () => {
                 await new Promise(resolve => {
                     hideProgress = resolve
                 })
@@ -161,6 +169,10 @@ export async function activate(context: vscode.ExtensionContext) {
     }))
 
     context.subscriptions.push(vscode.commands.registerCommand('importQuicken.fixImport', async () => {
+        if (initializing) {
+            return
+        }
+
         const editor = vscode.window.activeTextEditor
         const document = editor.document
 
@@ -179,7 +191,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         })
 
-        await vscode.window.withProgress({ title: 'Fixing invalid import/require statements', location: vscode.ProgressLocation.Window }, async () => {
+        await vscode.window.withProgress({ title: 'Fixing invalid import/require statements...', location: vscode.ProgressLocation.Notification }, async () => {
             for (let lang of languages) {
                 if (lang.fixImport === undefined) {
                     continue
@@ -203,6 +215,10 @@ export async function activate(context: vscode.ExtensionContext) {
     }))
 
     context.subscriptions.push(vscode.commands.registerCommand('importQuicken.convertImport', async () => {
+        if (initializing) {
+            return
+        }
+
         const editor = vscode.window.activeTextEditor
 
         if (editor === undefined) {
