@@ -13,13 +13,19 @@ export interface JavaScriptConfigurations {
 }
 
 const SUPPORTED_EXTENSION = /\.(j|t)sx?$/i
+const INDEX_FILE_PATTERN = /(\\|\/)index(\.(j|t)sx?)?$/
 
 type PackageJsonPath = string
 
-// Note that shared cache are safely used here because
+// Note that the followings are shared with TypeScript language class
 const defaultImportCache = new Map<FilePath, string>()
 const namespaceImportCache = new Map<FilePath, string>()
 const nodeItemCache = new Map<PackageJsonPath, Array<NodeItem>>()
+const fileExtensionExclusion = new Set<string>()
+const customImportSyntax = { imports: 0, requires: 0 }
+const customIndexFile = { explicit: 0, implicit: 0 }
+const customQuoteCharacters = { single: 0, double: 0 }
+const customStatementEnding = { semi: 0, none: 0 }
 
 export default class JavaScript implements Language {
 	private fileCache: Array<FileItem>
@@ -70,23 +76,64 @@ export default class JavaScript implements Language {
 			return
 		}
 
+		const quotes = findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node)).map(node => node.getText().trim().charAt(0))
+		if (quotes.length > 0) {
+			const singleCount = quotes.filter(quote => quote === '\'').length
+			customQuoteCharacters.single += singleCount
+			customQuoteCharacters.double += quotes.length - singleCount
+		}
+
+		const statements = _.chain([codeTree, ...findNodesRecursively<ts.Block>(codeTree, node => ts.isBlock(node))])
+			.flatMap(block => Array.from(block.statements))
+			.uniq()
+			.value()
+		if (statements.length > 0) {
+			const semiCount = statements.filter(node => node.getText().trim().endsWith(';')).length
+			customStatementEnding.semi += semiCount
+			customStatementEnding.none += statements.length - semiCount
+		}
+
 		const existingImports = getExistingImports(codeTree)
 		for (const { node, path } of existingImports) {
+			if (ts.isImportDeclaration(node)) {
+				customImportSyntax.imports += 1
+			} else {
+				customImportSyntax.requires += 1
+			}
+
 			if (!ts.isImportDeclaration(node) || !node.importClause) {
 				continue
 			}
 
-			const moduleNameOrFilePath = /^\.\.?\//.test(path)
-				? await tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
-				: path
+			let moduleNameOrFullPath = path
+			if (path.startsWith('.')) {
+				const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
+
+				moduleNameOrFullPath = fullPath
+
+				if (SUPPORTED_EXTENSION.test(fullPath)) {
+					const fileExtensionWithLeadingDot = fp.extname(fullPath)
+
+					if (INDEX_FILE_PATTERN.test(fullPath)) {
+						if (INDEX_FILE_PATTERN.test(path)) {
+							customIndexFile.explicit += 1
+						} else {
+							customIndexFile.implicit += 1
+						}
+
+					} else if (path.endsWith(fileExtensionWithLeadingDot) === false) {
+						fileExtensionExclusion.add(fileExtensionWithLeadingDot.replace(/^\./, ''))
+					}
+				}
+			}
 
 			if (node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) {
-				namespaceImportCache.set(moduleNameOrFilePath, node.importClause.namedBindings.name.text)
+				namespaceImportCache.set(moduleNameOrFullPath, node.importClause.namedBindings.name.text)
 				continue
 			}
 
 			if (node.importClause.name && ts.isIdentifier(node.importClause.name)) {
-				defaultImportCache.set(moduleNameOrFilePath, node.importClause.name.text)
+				defaultImportCache.set(moduleNameOrFullPath, node.importClause.name.text)
 				continue
 			}
 		}
@@ -322,7 +369,7 @@ export default class JavaScript implements Language {
 				nonResolvableImports.push(item)
 
 			} else if (matchingFullPaths.length === 1) {
-				const path = await new FileItem(matchingFullPaths[0]).getRelativePath(codeTree, document)
+				const path = await new FileItem(matchingFullPaths[0]).getRelativePath(document)
 				await editor.edit(worker => {
 					worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
 				})
@@ -345,7 +392,7 @@ export default class JavaScript implements Language {
 				return null
 			}
 
-			const path = await new FileItem(selectedItem.fullPath).getRelativePath(codeTree, document)
+			const path = await new FileItem(selectedItem.fullPath).getRelativePath(document)
 			await editor.edit(worker => {
 				worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
 			})
@@ -365,9 +412,17 @@ export default class JavaScript implements Language {
 
 	reset() {
 		this.fileCache = null
+
 		nodeItemCache.clear()
 		namespaceImportCache.clear()
 		defaultImportCache.clear()
+		fileExtensionExclusion.clear()
+
+		for (const custom of [customImportSyntax, customIndexFile, customQuoteCharacters, customStatementEnding] as Array<{ [field: string]: number }>) {
+			for (const field in custom) {
+				custom[field] = 0
+			}
+		}
 	}
 
 	protected async createLanguageSpecificFileFilter() {
@@ -497,7 +552,7 @@ export default class JavaScript implements Language {
 				continue
 			}
 
-			const statementEnding = await guessStatementEnding(codeTree) || ''
+			const statementEnding = customStatementEnding.semi >= customStatementEnding.none ? ';' : ''
 
 			const lineEnding = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
 
@@ -551,7 +606,7 @@ class FileItem implements Item {
 			return null
 		}
 
-		const path = await this.getRelativePath(codeTree, document)
+		const path = await this.getRelativePath(document)
 
 		if (/^(css|less|sass|scss|styl)$/.test(this.info.fileExtensionWithoutLeadingDot)) {
 			const existingImports = getExistingImports(codeTree)
@@ -563,7 +618,7 @@ class FileItem implements Item {
 				return null
 			}
 
-			const snippet = await getImportOrRequireSnippet('infer', null, null, path, codeTree, document)
+			const snippet = await getImportOrRequireSnippet('infer', null, null, path, document)
 			await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
 			await JavaScript.fixESLint()
 			return null
@@ -571,28 +626,28 @@ class FileItem implements Item {
 
 		if (this.info.fileExtensionWithoutLeadingDot === 'json') {
 			const autoName = _.words(this.info.fileNameWithoutExtension.replace(/\..+/g, '')).join('')
-			const snippet = await getImportOrRequireSnippet('require', 'default', autoName, path, codeTree, document)
+			const snippet = await getImportOrRequireSnippet('require', 'default', autoName, path, document)
 			await editor.edit(worker => worker.insert(activeCursorPosition, snippet))
 			await JavaScript.fixESLint()
 			return null
 		}
 
-		const snippet = await getImportOrRequireSnippet('require', null, null, path, codeTree, document)
+		const snippet = await getImportOrRequireSnippet('require', null, null, path, document)
 		await editor.edit(worker => worker.insert(activeCursorPosition, snippet))
 		await JavaScript.fixESLint()
 	}
 
-	async getRelativePath(codeTree: ts.SourceFile, document: vscode.TextDocument) {
+	async getRelativePath(document: vscode.TextDocument) {
 		const directoryPath = new FileInfo(document.fileName).directoryPath
 		let path = this.info.getRelativePath(directoryPath)
 
 		// Remove "/index.js" from the path
-		if (checkIfIndexFile(this.info.fileNameWithExtension) && await guessIndexFileExclusion(this.info, codeTree)) {
+		if (INDEX_FILE_PATTERN.test(this.info.fullPathForPOSIX) && customIndexFile.implicit > customIndexFile.explicit) {
 			return fp.dirname(path)
 		}
 
 		// Remove file extension from the path
-		if (await guessFileExtensionExclusion(this.info.fileExtensionWithoutLeadingDot, codeTree)) {
+		if (fileExtensionExclusion.has(this.info.fileExtensionWithoutLeadingDot)) {
 			return path.replace(new RegExp(_.escapeRegExp(fp.extname(this.info.fileNameWithExtension)) + '$'), '')
 		}
 
@@ -669,7 +724,7 @@ class IdentifierItem extends FileItem {
 					continue
 				}
 
-				const path = await indexFile.getRelativePath(codeTree, document)
+				const path = await indexFile.getRelativePath(document)
 
 				if (exportedName === '*default') {
 					return {
@@ -696,7 +751,7 @@ class IdentifierItem extends FileItem {
 			}
 		}
 
-		const path = await this.getRelativePath(codeTree, document)
+		const path = await this.getRelativePath(document)
 
 		if (this.defaultExported) {
 			const name = defaultImportCache.get(this.info.fullPath) || autoName
@@ -887,7 +942,7 @@ class IdentifierItem extends FileItem {
 			}
 		}
 
-		const snippet = await getImportOrRequireSnippet('infer', kind, name, path, codeTree, document)
+		const snippet = await getImportOrRequireSnippet('infer', kind, name, path, document)
 		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
 		await JavaScript.fixESLint()
 	}
@@ -1027,7 +1082,7 @@ class NodeItem implements Item {
 			}
 		}
 
-		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.path, codeTree, document)
+		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.path, document)
 		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, this.path, document), snippet))
 		await JavaScript.fixESLint()
 	}
@@ -1104,11 +1159,6 @@ class NodeItem implements Item {
 			return []
 		}
 	}
-}
-
-function checkIfIndexFile(fileNameWithExtension: string) {
-	const parts = fileNameWithExtension.split('.')
-	return parts.length === 2 && parts[0] === 'index' && SUPPORTED_EXTENSION.test(fileNameWithExtension)
 }
 
 function getRequirePath(node: ts.Node) {
@@ -1199,148 +1249,12 @@ async function insertNamedImportToExistingImports(name: string, existingImports:
 	await editor.edit(worker => worker.insert(position, separator + name))
 }
 
-async function matchNearbyFiles<T>(filePath: string, matcher: (codeTree: ts.SourceFile, stopPropagation?: boolean) => Promise<T>, defaultValue: T): Promise<T> {
-	const workingDocumentLink = vscode.Uri.file(filePath)
-	const workspaceDirectory = vscode.workspace.getWorkspaceFolder(workingDocumentLink).uri.fsPath
-	const workingDirectory = _.trim(workingDocumentLink.fsPath.substring(workspaceDirectory.length), fp.sep)
-	const workingDirectoryParts = workingDirectory.split(fp.sep)
-	do {
-		workingDirectoryParts.pop() // Note that the first `pop()` is the file name itself
-
-		const fileLinks = await vscode.workspace.findFiles(fp.posix.join(...workingDirectoryParts, '**', '*.{js,jsx,ts,tsx}'), null, 2000)
-		for (const link of fileLinks) {
-			if (link.fsPath === workingDocumentLink.fsPath) {
-				continue
-			}
-
-			const codeTree = await JavaScript.parse(link.fsPath)
-			if (!codeTree) {
-				continue
-			}
-
-			const result = await matcher(codeTree, true)
-			if (result !== null && result !== undefined) {
-				return result
-			}
-		}
-	} while (workingDirectoryParts.length > 0)
-
-	return defaultValue
-}
-
-const indexFilePattern = /(\\|\/)index(\.(j|t)sx?)?$/
-
-async function guessIndexFileExclusion(indexFileInfo: FileInfo, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<boolean> {
-	const existingImports = getExistingImports(codeTree).filter(({ path }) => path.startsWith('../'))
-
-	for (const { path } of existingImports) {
-		if (indexFilePattern.test(path)) {
-			return false
-		}
-	}
-
-	for (const { path } of existingImports) {
-		const fullPath = await tryGetFullPath([indexFileInfo.directoryPath, path], indexFileInfo.fileExtensionWithoutLeadingDot)
-		if (indexFilePattern.test(fullPath)) {
-			return true
-		}
-	}
-
-	if (stopPropagation) {
-		return null
-	}
-
-	return matchNearbyFiles(codeTree.fileName, (...args) => guessIndexFileExclusion(indexFileInfo, ...args), false)
-}
-
-async function guessFileExtensionExclusion(fileExtensionWithoutLeadingDot: string, codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<boolean> {
-	if (SUPPORTED_EXTENSION.test('.' + fileExtensionWithoutLeadingDot) === false) {
-		return false
-	}
-
-	const existingImports = getExistingImports(codeTree).filter(({ path }) => /^\.\.?\//.test(path))
-	if (existingImports.length > 0) {
-		for (const { path } of existingImports) {
-			if (SUPPORTED_EXTENSION.test(path)) {
-				return false
-			}
-
-			const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fileExtensionWithoutLeadingDot)
-			if (fullPath && _.last(fullPath.split(fp.sep)) === _.last(path.split('/'))) {
-				return false
-			}
-		}
-
-		return true
-	}
-
-	if (stopPropagation) {
-		return null
-	}
-
-	return matchNearbyFiles(codeTree.fileName, (...args) => guessFileExtensionExclusion(fileExtensionWithoutLeadingDot, ...args), false)
-}
-
-async function guessQuoteCharacter(codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
-	const existingImports = getExistingImports(codeTree)
-	if (existingImports.length > 0) {
-		const nodes = findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node))
-		if (nodes.length > 0) {
-			return nodes[0].getText().trim().charAt(0)
-		}
-	}
-
-	const nodes = findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node))
-	if (nodes.length > 0) {
-		return nodes[0].getText().trim().charAt(0)
-	}
-
-	if (stopPropagation) {
-		return null
-	}
-
-	return matchNearbyFiles(codeTree.fileName, guessQuoteCharacter, '"')
-}
-
-async function guessStatementEnding(codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<string> {
-	const statements = _.chain([codeTree, ...findNodesRecursively<ts.Block>(codeTree, node => ts.isBlock(node))])
-		.map(block => Array.from(block.statements))
-		.flatten()
-		.uniq()
-		.value()
-	if (statements.length > 0) {
-		return statements.some(node => node.getText().trim().endsWith(';')) ? ';' : ''
-	}
-
-	if (stopPropagation) {
-		return null
-	}
-
-	return matchNearbyFiles(codeTree.fileName, guessStatementEnding, ';')
-}
-
-async function guessImportSyntax(codeTree: ts.SourceFile, stopPropagation?: boolean): Promise<boolean> {
-	if (codeTree.statements.some(node => ts.isImportDeclaration(node))) {
-		return true
-	}
-
-	if (findNodesRecursively(codeTree, node => !!getRequirePath(node)).length > 0) {
-		return false
-	}
-
-	if (stopPropagation) {
-		return null
-	}
-
-	return matchNearbyFiles(codeTree.fileName, guessImportSyntax, false)
-}
-
 type ImportKind = 'default' | 'namespace' | 'named' | null
 
-async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer', kind: ImportKind, name: string | null, path: string, codeTree: ts.SourceFile, document: vscode.TextDocument) {
-	const quote = await guessQuoteCharacter(codeTree) || "'"
+async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer', kind: ImportKind, name: string | null, path: string, document: vscode.TextDocument) {
+	const quote = customQuoteCharacters.single >= customQuoteCharacters.double ? '\'' : '"'
 
-	const statementEnding = await guessStatementEnding(codeTree) || ''
+	const statementEnding = customStatementEnding.semi >= customStatementEnding.none ? ';' : ''
 
 	const lineEnding = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
 
@@ -1348,7 +1262,7 @@ async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer',
 		syntax = 'import'
 	}
 
-	if (syntax === 'import' || syntax === 'infer' && await guessImportSyntax(codeTree)) {
+	if (syntax === 'import' || syntax === 'infer' && customImportSyntax.imports > customImportSyntax.requires) {
 		if (!kind || !name) {
 			return `import ${quote}${path}${quote}` + statementEnding + lineEnding
 		} else if (kind === 'default') {
