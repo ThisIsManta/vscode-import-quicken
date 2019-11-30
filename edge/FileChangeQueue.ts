@@ -1,9 +1,27 @@
 import { fs } from 'mz'
+import * as vscode from 'vscode'
 
-export function createFileChangeQueue(onFileChange: ({ filePath: string, removed: boolean }) => Promise<void>) {
-	const fileChangeList: Array<{ filePath: string, removed: boolean }> = []
+export default class FileChangeQueue extends vscode.Disposable {
+	private fileChangeList: Array<{ filePath: string, removed: boolean }> = []
+	private lastTimeout: NodeJS.Timeout = null
+	private processing = false
+	private onFileChange: ({ filePath: string, removed: boolean }) => Promise<void>
+	private disposed = false
 
-	function push(filePath: string, removed: boolean) {
+	constructor(onFileChange: ({ filePath: string, removed: boolean }) => Promise<void>) {
+		super(() => {
+			this.fileChangeList.splice(0, this.fileChangeList.length)
+			if (this.lastTimeout !== null) {
+				clearTimeout(this.lastTimeout)
+			}
+			this.processing = false
+			this.disposed = true
+		})
+
+		this.onFileChange = onFileChange
+	}
+
+	private push(filePath: string, removed: boolean) {
 		if (filePath.split(/\\|\//).includes('.git')) {
 			return
 		}
@@ -12,46 +30,52 @@ export function createFileChangeQueue(onFileChange: ({ filePath: string, removed
 			return
 		}
 
-		const index = fileChangeList.findIndex(item => item.filePath === filePath)
+		const index = this.fileChangeList.findIndex(item => item.filePath === filePath)
 		if (index >= 0) {
-			fileChangeList.splice(index, 1)
-			fileChangeList.push({ filePath, removed })
+			this.fileChangeList.splice(index, 1)
+			this.fileChangeList.push({ filePath, removed })
 		} else {
-			fileChangeList.push({ filePath, removed })
+			this.fileChangeList.push({ filePath, removed })
 		}
 	}
 
-	let lastTimeout: NodeJS.Timeout = null
-	let processing = false
-
-	async function process() {
-		if (processing) {
+	private async process() {
+		if (this.processing) {
 			return
 		}
 
-		processing = true
+		this.processing = true
 
-		while (fileChangeList.length > 0) {
-			await onFileChange(fileChangeList[0])
-			fileChangeList.shift()
-		}
-
-		processing = false
-	}
-
-	return {
-		add: (filePath: string) => push(filePath, false),
-		remove: (filePath: string) => push(filePath, true),
-		processLazily: () => {
-			if (processing) {
+		while (this.fileChangeList.length > 0) {
+			if (this.disposed) {
 				return
 			}
 
-			clearTimeout(lastTimeout)
-			lastTimeout = setTimeout(process, 1000)
-		},
-		processImmediately: () => {
-			process()
-		},
+			await this.onFileChange(this.fileChangeList[0])
+			this.fileChangeList.shift()
+		}
+
+		this.processing = false
+	}
+
+	add(filePath: string) {
+		this.push(filePath, false)
+	}
+
+	remove(filePath: string) {
+		this.push(filePath, true)
+	}
+
+	processLazily() {
+		if (this.processing || this.disposed) {
+			return
+		}
+
+		clearTimeout(this.lastTimeout)
+		this.lastTimeout = setTimeout(() => { this.process }, 1000)
+	}
+
+	processImmediately() {
+		this.process()
 	}
 }

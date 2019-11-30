@@ -3,7 +3,7 @@ import * as _ from 'lodash'
 import * as vscode from 'vscode'
 
 import { ExtensionLevelConfigurations, Language, Item } from './global'
-import { createFileChangeQueue } from './FileChangeQueue'
+import FileChangeQueue from './FileChangeQueue'
 import JavaScript from './JavaScript'
 import TypeScript from './TypeScript'
 import Stylus from './Stylus'
@@ -13,10 +13,7 @@ let languages: Array<Language>
 export async function activate(context: vscode.ExtensionContext) {
     let preparingFiles = true
 
-    const fileWatch = vscode.workspace.createFileSystemWatcher('**/*')
-    context.subscriptions.push(fileWatch)
-
-    const fileChanges = createFileChangeQueue(async ({ filePath, removed }) => {
+    const fileChanges = new FileChangeQueue(async ({ filePath, removed }) => {
         await Promise.all(languages.map(async language => {
             if (language.cutItem) {
                 await language.cutItem(filePath)
@@ -31,6 +28,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         }))
     })
+    context.subscriptions.push(fileChanges)
 
     context.subscriptions.push(fileWatch.onDidCreate(e => {
         fileChanges.add(e.fsPath)
