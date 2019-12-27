@@ -1,11 +1,11 @@
-import { fs} from 'mz'
-import * as fp from 'path'
 import * as _ from 'lodash'
-import * as vscode from 'vscode'
+import { fs } from 'mz'
+import * as fp from 'path'
 import { Parser, nodes as Nodes } from 'stylus'
+import * as vscode from 'vscode'
 
-import { ExtensionLevelConfigurations, Language, Item, getSortingLogic, findFilesRoughly } from './global';
 import FileInfo from './FileInfo'
+import { ExtensionLevelConfigurations, Language, Item, getSortingLogic, findFilesRoughly } from './global'
 
 export interface StylusConfigurations {
 	syntax: '@import' | '@require'
@@ -164,8 +164,8 @@ export default class Stylus implements Language {
 		try {
 			return (new Parser(code) as any).parse()
 
-		} catch (ex) {
-			console.error(ex)
+		} catch (error) {
+			console.error(error)
 			return null
 		}
 	}
@@ -188,8 +188,10 @@ class FileItem implements Item {
 		if (this.options.indexFile === false && this.fileInfo.fileNameWithExtension === 'index.styl') {
 			this.label = this.fileInfo.directoryName
 			this.description = _.trim(this.fileInfo.fullPath.substring(rootPath.length), fp.sep)
+
 		} else if (this.options.fileExtension === false && this.fileInfo.fileExtensionWithoutLeadingDot === 'styl') {
 			this.label = this.fileInfo.fileNameWithoutExtension
+
 		} else {
 			this.label = this.fileInfo.fileNameWithExtension
 		}
@@ -271,6 +273,7 @@ function getExistingImportsAndUrls(node: any, visitedNodes = new Set()) {
 				results.push(...getExistingImportsAndUrls(node[prop], visitedNodes))
 			}
 		}
+
 		return results
 
 	} else {

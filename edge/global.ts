@@ -1,7 +1,7 @@
-import * as fs from 'fs'
-import * as fp from 'path'
 import * as _ from 'lodash'
+import * as fp from 'path'
 import * as vscode from 'vscode'
+
 import FileInfo from './FileInfo'
 import * as JavaScript from './JavaScript'
 import * as Stylus from './Stylus'
@@ -31,13 +31,13 @@ export interface Item extends vscode.QuickPickItem {
 // TODO: remove this
 export function getSortingLogic<T extends { fileInfo: FileInfo }>(rootPath: string) {
 	return [
-		(item: T) => item.fileInfo.directoryPath === rootPath
+		(item: T) => (item.fileInfo.directoryPath === rootPath
 			? '!'
-			: item.fileInfo.directoryPath.substring(rootPath.length).toLowerCase(),
-		(item: T) => item.fileInfo.fileNameWithoutExtension === 'index' ? 1 : 0,
-		(item: T) => /^\W*[a-z]/.test(item.fileInfo.fileNameWithExtension)
+			: item.fileInfo.directoryPath.substring(rootPath.length).toLowerCase()),
+		(item: T) => (item.fileInfo.fileNameWithoutExtension === 'index' ? 1 : 0),
+		(item: T) => (/^\W*[a-z]/.test(item.fileInfo.fileNameWithExtension)
 			? item.fileInfo.fileNameWithExtension.toUpperCase()
-			: item.fileInfo.fileNameWithExtension.toLowerCase()
+			: item.fileInfo.fileNameWithExtension.toLowerCase()),
 	]
 }
 
@@ -58,7 +58,7 @@ export function getShortList<T extends { fileInfo: FileInfo }>(items: Array<T>, 
 	return itemsFromCurrentDirectory.concat(itemsFromSubDirectories)
 }
 
-export async function findFilesRoughly(filePath: string, fileExtensions?: Array<string>) {
+export async function findFilesRoughly(filePath: string, fileExtensions?: Array<string>): Promise<Array<string>> {
 	const fileName = fp.basename(filePath)
 
 	let fileLinks = await vscode.workspace.findFiles('**/' + fileName)

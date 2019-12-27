@@ -1,10 +1,11 @@
+import * as _ from 'lodash'
 import { fs } from 'mz'
 import * as fp from 'path'
-import * as _ from 'lodash'
+import * as ts from 'typescript'
 import * as vscode from 'vscode'
+
 import { ExtensionLevelConfigurations } from './global'
 import JavaScript from './JavaScript'
-import * as ts from 'typescript'
 
 const JAVASCRIPT_EXTENSION = /\.jsx?$/i
 const TYPESCRIPT_EXTENSION = /\.tsx?$/i
@@ -19,7 +20,7 @@ export default class TypeScript extends JavaScript {
 					...extensionLevelConfig.javascript.filter,
 					...extensionLevelConfig.typescript.filter,
 				},
-			}
+			},
 		})
 	}
 

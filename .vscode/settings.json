@@ -1,5 +1,9 @@
 {
-    "files.exclude": {
-        "dist": true
-    }
+	"files.exclude": {
+		"dist": true
+	},
+	"eslint.validate": [
+		"javascript",
+		"typescript"
+	]
 }

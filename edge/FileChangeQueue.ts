@@ -14,6 +14,7 @@ export default class FileChangeQueue extends vscode.Disposable {
 			if (this.lastTimeout !== null) {
 				clearTimeout(this.lastTimeout)
 			}
+
 			this.processing = false
 			this.disposed = true
 		})
@@ -33,9 +34,16 @@ export default class FileChangeQueue extends vscode.Disposable {
 		const index = this.fileChangeList.findIndex(item => item.filePath === filePath)
 		if (index >= 0) {
 			this.fileChangeList.splice(index, 1)
-			this.fileChangeList.push({ filePath, removed })
+			this.fileChangeList.push({
+				filePath,
+				removed,
+			})
+
 		} else {
-			this.fileChangeList.push({ filePath, removed })
+			this.fileChangeList.push({
+				filePath,
+				removed,
+			})
 		}
 	}
 
@@ -72,7 +80,9 @@ export default class FileChangeQueue extends vscode.Disposable {
 		}
 
 		clearTimeout(this.lastTimeout)
-		this.lastTimeout = setTimeout(() => { this.process }, 1000)
+		this.lastTimeout = setTimeout(() => {
+			this.process()
+		}, 1000)
 	}
 
 	processImmediately() {

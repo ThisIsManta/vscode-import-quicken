@@ -1,5 +1,5 @@
-import * as fp from 'path'
 import * as _ from 'lodash'
+import * as fp from 'path'
 
 const PATH_SEPARATOR_FOR_WINDOWS = /\\/g
 
@@ -40,6 +40,7 @@ export default class FileInfo {
 		if (relativePath.startsWith('../') === false) {
 			relativePath = './' + relativePath
 		}
+
 		return relativePath
 	}
 }
