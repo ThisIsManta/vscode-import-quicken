@@ -1,3 +1,6 @@
+## 1.1.8
+- Fix unable to recognize newly created files.
+
 ## 1.1.7
 - Improve guessing syntax performance.
 

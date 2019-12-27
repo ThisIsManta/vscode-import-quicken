@@ -1359,7 +1359,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 		return exportedNames
 	}
 
-	const filePath = typeof filePathOrCodeTree === 'string' ? filePathOrCodeTree : filePathOrCodeTree.fileName
+	const filePath = typeof filePathOrCodeTree === 'string' ? filePathOrCodeTree : filePathOrCodeTree.fileName.replace(/\//g, fp.sep)
 
 	if (cachedFilePaths.has(filePath)) {
 		return cachedFilePaths.get(filePath)
