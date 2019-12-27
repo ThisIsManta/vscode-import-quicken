@@ -49,7 +49,7 @@ const getPackageJsonList = _.memoize(async () => {
 // Note that the followings are shared with TypeScript language class
 const defaultImportCache = new Map<FilePath, string>()
 const namespaceImportCache = new Map<FilePath, string>()
-const nodeItemCache = new Map<PackageJsonPath, Array<NodeItem>>()
+const nodeModuleCache = new Map<PackageJsonPath, Array<NodeItem>>()
 const fileExtensionExclusion = new Set<string>()
 const customImportSyntax = {
 	imports: 0,
@@ -70,7 +70,8 @@ const customStatementEnding = {
 
 export default class JavaScript implements Language {
 	private fileCache: Array<FileItem>
-	private identifierCache = new Map<FilePath, IdentifierMap>()
+	private fileIdentifierCache = new Map<FilePath, IdentifierMap>()
+	private nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 
 	public configs: JavaScriptConfigurations
 
@@ -86,7 +87,7 @@ export default class JavaScript implements Language {
 		return true
 	}
 
-	private async tryGetIdentifiers(filePath: string) {
+	private async setCache(filePath: string) {
 		if (/(\\|\/)/.test(filePath) === false) {
 			return []
 		}
@@ -94,25 +95,42 @@ export default class JavaScript implements Language {
 		if (SUPPORTED_EXTENSION.test(filePath)) {
 			const codeTree = await JavaScript.parse(filePath)
 
-			await this.setImportCache(codeTree)
+			await this.setImportPattern(codeTree)
 
-			this.identifierCache.delete(filePath)
+			this.fileIdentifierCache.delete(filePath)
 
-			const identifiers = Array.from(await getExportedIdentifiers(codeTree, this.identifierCache))
-			return _.chain(identifiers)
-				.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
-				.map(([name, { sourceText: text }]) => new IdentifierItem(filePath, name, text))
-				.sortBy(
-					identifier => (identifier.defaultExported ? 0 : 1),
-					identifier => identifier.name.toLowerCase()
-				)
-				.value()
+			const packageJsonList = await getPackageJsonList()
+			const packageJsonPath = getClosestPackageJson(filePath, packageJsonList)?.packageJsonPath
+			if (packageJsonPath) {
+				if (this.nodeIdentifierCache.has(packageJsonPath) === false) {
+					this.nodeIdentifierCache.set(packageJsonPath, [])
+				}
+
+				const nodeItems = this.nodeIdentifierCache.get(packageJsonPath)
+				for (const { identifier, name } of getNamedImportedIdentifiersFromNodeModule(codeTree)) {
+					if (nodeItems.some(item => item.identifier === identifier && item.name === name) === false) {
+						nodeItems.push(new NodeIdentifierItem(name, identifier))
+					}
+				}
+			}
+
+			this.fileCache.push(
+				..._.chain(Array.from(await getExportedIdentifiers(codeTree, this.fileIdentifierCache)))
+					.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
+					.map(([name, { sourceText }]) => new FileIdentifierItem(filePath, name, sourceText))
+					.sortBy(
+						identifier => (identifier.defaultExported ? 0 : 1),
+						identifier => identifier.name.toLowerCase()
+					)
+					.value()
+			)
+			return
 		}
 
 		return [new FileItem(filePath)]
 	}
 
-	private async setImportCache(codeTree: ts.SourceFile) {
+	private async setImportPattern(codeTree: ts.SourceFile) {
 		if (!codeTree) {
 			return
 		}
@@ -191,20 +209,20 @@ export default class JavaScript implements Language {
 
 					this.fileCache = []
 					for (const link of fileLinks) {
-						this.fileCache.push(...await this.tryGetIdentifiers(link.fsPath))
+						this.setCache(link.fsPath)
 					}
 
 					const nonWordInitials = /^\W*/
 					this.fileCache = _.sortBy(this.fileCache,
 						item => (SUPPORTED_EXTENSION.test(item.info.fileNameWithExtension) ? 0 : 1),
 						item => item.info.fileNameWithExtension.replace(nonWordInitials, ''),
-						item => (item instanceof IdentifierItem ? item.name.toLowerCase() : ''),
+						item => (item instanceof FileIdentifierItem ? item.name.toLowerCase() : ''),
 					)
 				}
 
 				const packageJsonList = await getPackageJsonList()
 				for (const { packageJsonPath, nodeModulePathList } of packageJsonList) {
-					if (nodeItemCache.has(packageJsonPath)) {
+					if (nodeModuleCache.has(packageJsonPath)) {
 						continue
 					}
 
@@ -216,8 +234,7 @@ export default class JavaScript implements Language {
 
 					let nodeJsAPIs: Array<NodeItem> = []
 					if (dependencyNameList.some(name => name === '@types/node')) {
-						const nodeJsVersion = await getLocalModuleVersion('@types/node', nodeModulePathList)
-						nodeJsAPIs = (await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeItem(name, nodeJsVersion))
+						nodeJsAPIs = (await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeItem(name))
 					}
 
 					const dependencyItemList: Array<NodeItem> = []
@@ -226,13 +243,10 @@ export default class JavaScript implements Language {
 							continue
 						}
 
-						dependencyItemList.push(new NodeItem(name, await getLocalModuleVersion(name, nodeModulePathList)))
+						dependencyItemList.push(new NodeItem(name))
 					}
 
-					nodeItemCache.set(
-						packageJsonPath,
-						_.sortBy([...dependencyItemList, ...nodeJsAPIs], item => item.label)
-					)
+					nodeModuleCache.set(packageJsonPath, [...dependencyItemList, ...nodeJsAPIs])
 				}
 
 				this.workingThread = null
@@ -268,29 +282,33 @@ export default class JavaScript implements Language {
 		})()
 
 		const packageJsonList = await getPackageJsonList()
-		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
-		const nodeItems = packageJson && nodeItemCache.get(packageJson.packageJsonPath) || []
+		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
+		const nodeModuleItems = packageJsonPath && nodeModuleCache.get(packageJsonPath) || []
+		const nodeIdentifierItems = packageJsonPath && nodeModuleCache.has(packageJsonPath) && this.nodeIdentifierCache.get(packageJsonPath) || []
 
 		return [
 			...fileItems,
-			...nodeItems,
+			..._.sortBy([...nodeModuleItems, ...nodeIdentifierItems],
+				item => item.name.toLowerCase(),
+				item => (item instanceof NodeIdentifierItem ? item.identifier : ''),
+			),
 		]
 	}
 
 	async addItem(filePath: string) {
 		if (this.fileCache) {
-			this.fileCache.push(...await this.tryGetIdentifiers(filePath))
+			await this.setCache(filePath)
 		}
 
 		if (fp.basename(filePath) === 'package.json') {
 			await this.setItems()
 		}
 
-		await this.setImportCache(await JavaScript.parse(filePath))
+		await this.setImportPattern(await JavaScript.parse(filePath))
 	}
 
 	cutItem(filePath: string) {
-		this.identifierCache.delete(filePath)
+		this.fileIdentifierCache.delete(filePath)
 
 		if (this.fileCache) {
 			this.fileCache = this.fileCache.filter(file => file.info.fullPath !== filePath)
@@ -298,7 +316,7 @@ export default class JavaScript implements Language {
 
 		if (fp.basename(filePath) === 'package.json') {
 			getPackageJsonList.cache.clear()
-			nodeItemCache.delete(filePath)
+			nodeModuleCache.delete(filePath)
 		}
 	}
 
@@ -461,8 +479,9 @@ export default class JavaScript implements Language {
 
 	reset() {
 		this.fileCache = null
+		this.nodeIdentifierCache.clear()
 
-		nodeItemCache.clear()
+		nodeModuleCache.clear()
 		namespaceImportCache.clear()
 		defaultImportCache.clear()
 		fileExtensionExclusion.clear()
@@ -611,14 +630,11 @@ export default class JavaScript implements Language {
 }
 
 class FileItem implements Item {
-	readonly id: string;
 	label: string;
 	description: string;
 	readonly info: FileInfo
 
 	constructor(filePath: string) {
-		this.id = filePath
-
 		this.info = new FileInfo(filePath)
 
 		this.label = this.info.fileNameWithExtension
@@ -701,8 +717,7 @@ class FileItem implements Item {
 	}
 }
 
-class IdentifierItem extends FileItem {
-	readonly id: string
+class FileIdentifierItem extends FileItem {
 	label: string
 	description: string
 	detail: string
@@ -710,10 +725,8 @@ class IdentifierItem extends FileItem {
 	readonly name: string
 	readonly defaultExported: boolean
 
-	constructor(filePath: string, name: string, text: string) {
+	constructor(filePath: string, name: string, text?: string) {
 		super(filePath)
-
-		this.id = filePath + '::' + name
 
 		this.name = name
 
@@ -999,19 +1012,20 @@ class IdentifierItem extends FileItem {
 }
 
 class NodeItem implements Item {
-	readonly id: string
-	readonly label: string
-	readonly description: string
-	readonly path: string
+	readonly name: string
+	label: string
+	description: string
 
-	constructor(name: string, version: string) {
-		this.id = 'node://' + name
+	constructor(name: string) {
+		this.name = name
 		this.label = name
-		this.description = version ? 'v' + version : ''
-		this.path = name
 	}
 
 	async addImport(editor: vscode.TextEditor, language: JavaScript) {
+		return this.addImportInternal(editor, language, undefined)
+	}
+
+	protected async addImportInternal(editor: vscode.TextEditor, language: JavaScript, preselectedIdentifier: string | undefined) {
 		if (!editor) {
 			return null
 		}
@@ -1026,13 +1040,13 @@ class NodeItem implements Item {
 			return null
 		}
 
-		const autoName = _.words(_.last(this.path.split('/'))).map(_.upperFirst).join('')
+		const autoName = _.words(_.last(this.name.split('/'))).map(_.upperFirst).join('')
 
 		const existingImports = getExistingImports(codeTree)
-		const duplicateImport = existingImports.find(item => item.path === this.path)
+		const duplicateImport = existingImports.find(item => item.path === this.name)
 		if (duplicateImport) {
 			if (
-				typeDefinitions.length === 0 ||
+				!preselectedIdentifier && typeDefinitions.length === 0 ||
 				!ts.isImportDeclaration(duplicateImport.node) ||
 				!duplicateImport.node.importClause ||
 				(
@@ -1040,12 +1054,12 @@ class NodeItem implements Item {
 					ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)
 				)
 			) {
-				vscode.window.showErrorMessage(`The import of "${this.path}" already exists.`, { modal: true })
+				vscode.window.showErrorMessage(`The import of "${this.name}" already exists.`, { modal: true })
 				focusAt(duplicateImport.node, document)
 				return null
 			}
 
-			const selectedIdentifier = await vscode.window.showQuickPick([
+			const selectedIdentifier = preselectedIdentifier || await vscode.window.showQuickPick([
 				...(importDefaultIsPreferred ? ['default'] : []),
 				...typeDefinitions,
 			])
@@ -1056,14 +1070,14 @@ class NodeItem implements Item {
 			if (selectedIdentifier === 'default') {
 				if (duplicateImport.node.importClause.name) {
 					// Try merging `default` with `default`
-					vscode.window.showErrorMessage(`The import of "${this.path}" already exists.`, { modal: true })
+					vscode.window.showErrorMessage(`The import of "${this.name}" already exists.`, { modal: true })
 					focusAt(duplicateImport.node, document)
 					return null
 
 				} else if (duplicateImport.node.importClause.namedBindings && ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 					// Try merging `default` with `{ named }`
 					const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
-					await editor.edit(worker => worker.insert(position, (defaultImportCache.get(this.path) || autoName) + ', '))
+					await editor.edit(worker => worker.insert(position, (defaultImportCache.get(this.name) || autoName) + ', '))
 					await JavaScript.fixESLint()
 					return null
 				}
@@ -1106,11 +1120,11 @@ class NodeItem implements Item {
 		if (typeDefinitions.length === 0) {
 			if (importDefaultIsPreferred) {
 				kind = 'default'
-				name = defaultImportCache.get(this.path) || autoName
+				name = defaultImportCache.get(this.name) || autoName
 
 			} else {
 				kind = 'namespace'
-				name = namespaceImportCache.get(this.path) || autoName
+				name = namespaceImportCache.get(this.name) || autoName
 			}
 
 		} else {
@@ -1124,11 +1138,11 @@ class NodeItem implements Item {
 
 			if (select === 'default') {
 				kind = 'default'
-				name = defaultImportCache.get(this.path) || autoName
+				name = defaultImportCache.get(this.name) || autoName
 
 			} else if (select === '*') {
 				kind = 'namespace'
-				name = namespaceImportCache.get(this.path) || autoName
+				name = namespaceImportCache.get(this.name) || autoName
 
 			} else {
 				kind = 'named'
@@ -1136,8 +1150,8 @@ class NodeItem implements Item {
 			}
 		}
 
-		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.path, document)
-		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, this.path, document), snippet))
+		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.name, document)
+		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, this.name, document), snippet))
 		await JavaScript.fixESLint()
 	}
 
@@ -1151,7 +1165,7 @@ class NodeItem implements Item {
 		const getDefinitionPath = async () => {
 			// Traverse through the deepest `node_modules` first
 			for (const path of _.sortBy(packageJson.nodeModulePathList).reverse()) {
-				const fullPath = fp.join(path, 'node_modules', '@types/' + this.label, 'index.d.ts')
+				const fullPath = fp.join(path, 'node_modules', '@types/' + this.name, 'index.d.ts')
 				if (await fs.exists(fullPath)) {
 					return fullPath
 				}
@@ -1168,7 +1182,7 @@ class NodeItem implements Item {
 
 			let globallyExportedIdentifier: string = null
 			codeTree.forEachChild(node => {
-				if (ts.isModuleDeclaration(node) && node.name.text === this.label && node.body && ts.isModuleBlock(node.body)) {
+				if (ts.isModuleDeclaration(node) && node.name.text === this.name && node.body && ts.isModuleBlock(node.body)) {
 					// Find `declare module '???' { ... }` where ??? is the module name
 					node.body.forEachChild(node => {
 						if (node.modifiers && node.modifiers.some(node => node.kind === ts.SyntaxKind.ExportKeyword) && (node as any).name) {
@@ -1216,6 +1230,26 @@ class NodeItem implements Item {
 	}
 }
 
+class NodeIdentifierItem extends NodeItem {
+	readonly identifier: string
+
+	constructor(name: string, identifier: string) {
+		super(name)
+
+		this.identifier = identifier
+		this.label = identifier
+		this.description = name
+	}
+
+	async addImport(editor: vscode.TextEditor, language: JavaScript) {
+		return super.addImportInternal(editor, language, this.identifier)
+	}
+
+	valueOf() {
+		return this.name + '::' + this.identifier
+	}
+}
+
 function getRequirePath(node: ts.Node) {
 	if (node && ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'require' && node.arguments.length === 1) {
 		const firstArgument = node.arguments[0]
@@ -1226,7 +1260,7 @@ function getRequirePath(node: ts.Node) {
 }
 
 interface ImportStatementForReadOnly {
-	node: ts.Node
+	node: ts.ImportDeclaration | ts.VariableStatement | ts.ExpressionStatement
 	path: string
 }
 
@@ -1682,6 +1716,44 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 	return exportedNames
 }
 
+function getNamedImportedIdentifiersFromNodeModule(codeTree: ts.SourceFile) {
+	return _.chain(getExistingImports(codeTree))
+		.reject(({ path }) => path.startsWith('.') || path.startsWith('!'))
+		.flatMap(({ node, path }) => {
+			if (ts.isImportDeclaration(node) && ts.isNamedImports(node.importClause?.namedBindings)) {
+				return node.importClause.namedBindings.elements.map(stub => {
+					return {
+						identifier: stub.name.text,
+						name: path,
+					}
+				})
+			}
+
+			if (ts.isVariableStatement(node)) {
+				return _.flatMap(node.declarationList.declarations, stub => {
+					if (ts.isObjectBindingPattern(stub)) {
+						return stub.elements.map(item => {
+							if (ts.isIdentifier(item.propertyName)) {
+								return {
+									identifier: item.propertyName.text,
+									name: path,
+								}
+
+							} else if (ts.isIdentifier(item.name)) {
+								return {
+									identifier: item.name.text,
+									name: path,
+								}
+							}
+						})
+					}
+				})
+			}
+		})
+		.compact()
+		.value()
+}
+
 async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, cache?: Map<string, string>): Promise<string> {
 	const fullPath = fp.resolve(...pathList)
 
@@ -1804,22 +1876,6 @@ function focusAt(node: { getStart: () => number, getEnd: () => number }, documen
 		),
 		vscode.TextEditorRevealType.InCenterIfOutsideViewport
 	)
-}
-
-async function getLocalModuleVersion(name: string, modulePathList: Array<string>) {
-	for (const modulePath of modulePathList) {
-		try {
-			const packageJson = JSON.parse(await fs.readFile(fp.join(modulePath, 'node_modules', name, 'package.json'), 'utf-8'))
-			if (packageJson.version) {
-				return packageJson.version as string
-			}
-
-		} catch (error) {
-			// Do nothing
-		}
-	}
-
-	return null
 }
 
 async function getNodeJsAPIs(possibleModulePathList: Array<string>) {

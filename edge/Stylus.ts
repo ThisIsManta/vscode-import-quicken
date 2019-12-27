@@ -173,13 +173,11 @@ export default class Stylus implements Language {
 
 class FileItem implements Item {
 	private options: StylusConfigurations
-	readonly id: string;
 	readonly label: string;
 	readonly description: string;
 	readonly fileInfo: FileInfo
 
 	constructor(fileInfo: FileInfo, rootPath: string, options: StylusConfigurations) {
-		this.id = fileInfo.fullPathForPOSIX
 		this.options = options
 		this.fileInfo = fileInfo
 

@@ -1,4 +1,5 @@
-## 1.1.8
+## 1.2.0
+- Add recently used named imports for JavaScript/TypeScript node modules.
 - Fix unable to recognize newly created files.
 
 ## 1.1.7

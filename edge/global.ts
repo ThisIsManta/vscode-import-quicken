@@ -24,7 +24,6 @@ export interface Language {
 }
 
 export interface Item extends vscode.QuickPickItem {
-	id: string
 	addImport(editor: vscode.TextEditor, language: Language): Promise<null | undefined | void>
 }
 
