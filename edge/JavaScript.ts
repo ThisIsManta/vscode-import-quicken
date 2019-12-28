@@ -1171,22 +1171,39 @@ class NodeModuleItem implements Item {
 			return []
 		}
 
-		const getDefinitionPath = async () => {
+		const Φ = async () => {
 			// Traverse through the deepest `node_modules` first
-			for (const path of _.sortBy(packageJson.nodeModulePathList).reverse()) {
-				const fullPath = fp.join(path, 'node_modules', '@types/' + this.name, 'index.d.ts')
-				if (await fs.exists(fullPath)) {
-					return fullPath
+			for (const rootPath of _.sortBy(packageJson.nodeModulePathList).reverse()) {
+				const packageJsonPath = fp.join(rootPath, 'node_modules', this.name, 'package.json')
+				if (await fs.exists(packageJsonPath)) {
+					try {
+						const { typings } = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+						if (_.isString(typings)) {
+							const typeDefinitionPath = fp.resolve(fp.dirname(packageJsonPath), typings)
+							if (await fs.exists(typeDefinitionPath)) {
+								return typeDefinitionPath
+							}
+						}
+
+					} catch (error) {
+						// Do nothing
+					}
+				}
+
+				const typeDefinitionPath = fp.join(rootPath, 'node_modules', '@types/' + this.name, 'index.d.ts')
+				if (await fs.exists(typeDefinitionPath)) {
+					return typeDefinitionPath
 				}
 			}
 		}
-		const definitionPath = await getDefinitionPath()
-		if (definitionPath === undefined) {
+
+		const typeDefinitionPath = await Φ()
+		if (typeDefinitionPath === undefined) {
 			return []
 		}
 
 		try {
-			const codeTree = await JavaScript.parse(definitionPath)
+			const codeTree = await JavaScript.parse(typeDefinitionPath)
 			const typeDefinitions: Array<string> = []
 
 			let globallyExportedIdentifier: string = null
