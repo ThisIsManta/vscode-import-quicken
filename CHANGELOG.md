@@ -1,3 +1,6 @@
+## 1.2.1
+- Fix unable to add recently used named imports.
+
 ## 1.2.0
 - Add recently used named imports for JavaScript/TypeScript node modules.
 - Fix unable to recognize newly created files.

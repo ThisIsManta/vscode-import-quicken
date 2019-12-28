@@ -1117,7 +1117,11 @@ class NodeItem implements Item {
 
 		let kind: ImportKind = null
 		let name = autoName
-		if (typeDefinitions.length === 0) {
+		if (preselectedIdentifier) {
+			kind = 'named'
+			name = preselectedIdentifier
+
+		} else if (typeDefinitions.length === 0) {
 			if (importDefaultIsPreferred) {
 				kind = 'default'
 				name = defaultImportCache.get(this.name) || autoName
@@ -1720,7 +1724,7 @@ function getNamedImportedIdentifiersFromNodeModule(codeTree: ts.SourceFile) {
 	return _.chain(getExistingImports(codeTree))
 		.reject(({ path }) => path.startsWith('.') || path.startsWith('!'))
 		.flatMap(({ node, path }) => {
-			if (ts.isImportDeclaration(node) && ts.isNamedImports(node.importClause?.namedBindings)) {
+			if (ts.isImportDeclaration(node) && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings)) {
 				return node.importClause.namedBindings.elements.map(stub => {
 					return {
 						identifier: stub.name.text,
