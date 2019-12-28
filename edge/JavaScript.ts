@@ -209,7 +209,7 @@ export default class JavaScript implements Language {
 
 					this.fileCache = []
 					for (const link of fileLinks) {
-						this.setCache(link.fsPath)
+						await this.setCache(link.fsPath)
 					}
 
 					const nonWordInitials = /^\W*/
@@ -247,7 +247,7 @@ export default class JavaScript implements Language {
 						dependencyItemList.push(new NodeModuleItem(name))
 					}
 
-					nodeModuleCache.set(packageJsonPath, [...dependencyItemList, ...nodeJsAPIs])
+					nodeModuleCache.set(packageJsonPath, _.sortBy([...dependencyItemList, ...nodeJsAPIs], item => item.name.toLowerCase()))
 
 					if (this.nodeIdentifierCache.has(packageJsonPath)) {
 						this.nodeIdentifierCache.set(packageJsonPath, this.nodeIdentifierCache.get(packageJsonPath).filter(item => dependencyNameList.includes(item.name)))
@@ -293,10 +293,8 @@ export default class JavaScript implements Language {
 
 		return [
 			...fileItems,
-			..._.sortBy([...nodeModuleItems, ...nodeIdentifierItems],
-				item => item.name.toLowerCase(),
-				item => (item instanceof NodeIdentifierItem ? item.identifier : ''),
-			),
+			...nodeModuleItems,
+			...nodeIdentifierItems,
 		]
 	}
 
