@@ -230,6 +230,7 @@ export default class JavaScript implements Language {
 					const dependencyNameList = _.chain([packageJson.devDependencies, packageJson.dependencies])
 						.map(_.keys)
 						.flatten()
+						.uniq()
 						.value()
 
 					let nodeJsAPIs: Array<NodeModuleItem> = []

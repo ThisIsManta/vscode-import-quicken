@@ -1,5 +1,6 @@
 ## 1.2.1
 - Fix unable to add recently used named imports.
+- Fix duplicate dependencies in package.json.
 
 ## 1.2.0
 - Add recently used named imports for JavaScript/TypeScript node modules.
