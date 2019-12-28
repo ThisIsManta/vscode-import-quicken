@@ -49,7 +49,7 @@ const getPackageJsonList = _.memoize(async () => {
 // Note that the followings are shared with TypeScript language class
 const defaultImportCache = new Map<FilePath, string>()
 const namespaceImportCache = new Map<FilePath, string>()
-const nodeModuleCache = new Map<PackageJsonPath, Array<NodeItem>>()
+const nodeModuleCache = new Map<PackageJsonPath, Array<NodeModuleItem>>()
 const fileExtensionExclusion = new Set<string>()
 const customImportSyntax = {
 	imports: 0,
@@ -232,18 +232,18 @@ export default class JavaScript implements Language {
 						.flatten()
 						.value()
 
-					let nodeJsAPIs: Array<NodeItem> = []
+					let nodeJsAPIs: Array<NodeModuleItem> = []
 					if (dependencyNameList.some(name => name === '@types/node')) {
-						nodeJsAPIs = (await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeItem(name))
+						nodeJsAPIs = (await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeModuleItem(name))
 					}
 
-					const dependencyItemList: Array<NodeItem> = []
+					const dependencyItemList: Array<NodeModuleItem> = []
 					for (const name of dependencyNameList) {
 						if (name.startsWith('@types/')) {
 							continue
 						}
 
-						dependencyItemList.push(new NodeItem(name))
+						dependencyItemList.push(new NodeModuleItem(name))
 					}
 
 					nodeModuleCache.set(packageJsonPath, [...dependencyItemList, ...nodeJsAPIs])
@@ -1011,7 +1011,7 @@ class FileIdentifierItem extends FileItem {
 	}
 }
 
-class NodeItem implements Item {
+class NodeModuleItem implements Item {
 	readonly name: string
 	label: string
 	description: string
@@ -1234,7 +1234,7 @@ class NodeItem implements Item {
 	}
 }
 
-class NodeIdentifierItem extends NodeItem {
+class NodeIdentifierItem extends NodeModuleItem {
 	readonly identifier: string
 
 	constructor(name: string, identifier: string) {
@@ -1247,10 +1247,6 @@ class NodeIdentifierItem extends NodeItem {
 
 	async addImport(editor: vscode.TextEditor, language: JavaScript) {
 		return super.addImportInternal(editor, language, this.identifier)
-	}
-
-	valueOf() {
-		return this.name + '::' + this.identifier
 	}
 }
 
