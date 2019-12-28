@@ -248,6 +248,10 @@ export default class JavaScript implements Language {
 					}
 
 					nodeModuleCache.set(packageJsonPath, [...dependencyItemList, ...nodeJsAPIs])
+
+					if (this.nodeIdentifierCache.has(packageJsonPath)) {
+						this.nodeIdentifierCache.set(packageJsonPath, this.nodeIdentifierCache.get(packageJsonPath).filter(item => dependencyNameList.includes(item.name)))
+					}
 				}
 
 				this.workingThread = null
