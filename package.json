@@ -29,11 +29,7 @@
 		"vscode": "^1.36.0"
 	},
 	"activationEvents": [
-		"onLanguage:javascript",
-		"onLanguage:javascriptreact",
-		"onLanguage:typescript",
-		"onLanguage:typescriptreact",
-		"onLanguage:stylus"
+		"workspaceContains:**/package.json"
 	],
 	"main": "./dist/extension",
 	"contributes": {

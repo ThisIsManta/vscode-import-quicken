@@ -2,6 +2,7 @@
 - Fix unable to add recently used named imports.
 - Fix duplicate dependencies in package.json.
 - Add reading type definitions from `typings` in package.json.
+- Amend activation point from checking an active file to checking the existence of package.json
 
 ## 1.2.0
 - Add recently used named imports for JavaScript/TypeScript node modules.
