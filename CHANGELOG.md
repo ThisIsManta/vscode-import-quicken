@@ -3,6 +3,8 @@
 - Fix duplicate dependencies in package.json.
 - Add reading type definitions from `typings` in package.json.
 - Amend activation point from checking an active file to checking the existence of package.json
+- Amend non-blocking initialization process.
+- Remove list sorting logic for performance.
 
 ## 1.2.0
 - Add recently used named imports for JavaScript/TypeScript node modules.

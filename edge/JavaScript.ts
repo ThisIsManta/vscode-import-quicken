@@ -69,7 +69,7 @@ const customStatementEnding = {
 }
 
 export default class JavaScript implements Language {
-	private fileCache: Array<FileItem>
+	private fileCache: Array<FileItem> = []
 	private fileIdentifierCache = new Map<FilePath, IdentifierMap>()
 	private nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 
@@ -89,45 +89,42 @@ export default class JavaScript implements Language {
 
 	private async setCache(filePath: string) {
 		if (/(\\|\/)/.test(filePath) === false) {
-			return []
-		}
-
-		if (SUPPORTED_EXTENSION.test(filePath)) {
-			const codeTree = await JavaScript.parse(filePath)
-
-			await this.setImportPattern(codeTree)
-
-			this.fileIdentifierCache.delete(filePath)
-
-			const packageJsonList = await getPackageJsonList()
-			const packageJsonPath = getClosestPackageJson(filePath, packageJsonList)?.packageJsonPath
-			if (packageJsonPath) {
-				if (this.nodeIdentifierCache.has(packageJsonPath) === false) {
-					this.nodeIdentifierCache.set(packageJsonPath, [])
-				}
-
-				const nodeItems = this.nodeIdentifierCache.get(packageJsonPath)
-				for (const { identifier, name } of getNamedImportedIdentifiersFromNodeModule(codeTree)) {
-					if (nodeItems.some(item => item.identifier === identifier && item.name === name) === false) {
-						nodeItems.push(new NodeIdentifierItem(name, identifier))
-					}
-				}
-			}
-
-			this.fileCache.push(
-				..._.chain(Array.from(await getExportedIdentifiers(codeTree, this.fileIdentifierCache)))
-					.filter(([, { pathList }]) => _.uniq(pathList).length === 1)
-					.map(([name, { sourceText }]) => new FileIdentifierItem(filePath, name, sourceText))
-					.sortBy(
-						identifier => (identifier.defaultExported ? 0 : 1),
-						identifier => identifier.name.toLowerCase()
-					)
-					.value()
-			)
 			return
 		}
 
-		return [new FileItem(filePath)]
+		if (SUPPORTED_EXTENSION.test(filePath) === false) {
+			this.fileCache.push(new FileItem(filePath))
+			return
+		}
+
+		const codeTree = await JavaScript.parse(filePath)
+
+		await this.setImportPattern(codeTree)
+
+		this.fileIdentifierCache.delete(filePath)
+
+		const packageJsonList = await getPackageJsonList()
+		const packageJsonPath = getClosestPackageJson(filePath, packageJsonList)?.packageJsonPath
+		if (packageJsonPath) {
+			if (this.nodeIdentifierCache.has(packageJsonPath) === false) {
+				this.nodeIdentifierCache.set(packageJsonPath, [])
+			}
+
+			const nodeItems = this.nodeIdentifierCache.get(packageJsonPath)
+			for (const { identifier, name } of getNamedImportedIdentifiersFromNodeModule(codeTree)) {
+				if (nodeItems.some(item => item.identifier === identifier && item.name === name) === false) {
+					nodeItems.push(new NodeIdentifierItem(name, identifier))
+				}
+			}
+		}
+
+		for (const [name, { pathList, sourceText }] of await getExportedIdentifiers(codeTree, this.fileIdentifierCache)) {
+			if (_.uniq(pathList).length !== 1) {
+				continue
+			}
+
+			this.fileCache.push(new FileIdentifierItem(filePath, name, sourceText))
+		}
 	}
 
 	private async setImportPattern(codeTree: ts.SourceFile) {
@@ -204,20 +201,15 @@ export default class JavaScript implements Language {
 	setItems() {
 		if (!this.workingThread) {
 			const λ = async () => {
-				if (!this.fileCache) {
-					const fileLinks = _.filter(await vscode.workspace.findFiles('**/*'), await this.createLanguageSpecificFileFilter())
+				if (this.fileCache.length === 0) {
+					const fileLinks = _.filter(
+						await vscode.workspace.findFiles('**/*', '.*' /* Exclude top-level files or directories that start with a period */),
+						await this.createLanguageSpecificFileFilter()
+					)
 
-					this.fileCache = []
 					for (const link of fileLinks) {
 						await this.setCache(link.fsPath)
 					}
-
-					const nonWordInitials = /^\W*/
-					this.fileCache = _.sortBy(this.fileCache,
-						item => (SUPPORTED_EXTENSION.test(item.info.fileNameWithExtension) ? 0 : 1),
-						item => item.info.fileNameWithExtension.replace(nonWordInitials, ''),
-						item => (item instanceof FileIdentifierItem ? item.name.toLowerCase() : ''),
-					)
 				}
 
 				const packageJsonList = await getPackageJsonList()
@@ -226,6 +218,9 @@ export default class JavaScript implements Language {
 						continue
 					}
 
+					const nodeModuleItems: Array<NodeModuleItem> = []
+					nodeModuleCache.set(packageJsonPath, nodeModuleItems)
+
 					const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
 					const dependencyNameList = _.chain([packageJson.devDependencies, packageJson.dependencies])
 						.map(_.keys)
@@ -233,21 +228,17 @@ export default class JavaScript implements Language {
 						.uniq()
 						.value()
 
-					let nodeJsAPIs: Array<NodeModuleItem> = []
 					if (dependencyNameList.some(name => name === '@types/node')) {
-						nodeJsAPIs = (await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeModuleItem(name))
+						nodeModuleItems.push(...(await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeModuleItem(name)))
 					}
 
-					const dependencyItemList: Array<NodeModuleItem> = []
 					for (const name of dependencyNameList) {
 						if (name.startsWith('@types/')) {
 							continue
 						}
 
-						dependencyItemList.push(new NodeModuleItem(name))
+						nodeModuleItems.push(new NodeModuleItem(name))
 					}
-
-					nodeModuleCache.set(packageJsonPath, _.sortBy([...dependencyItemList, ...nodeJsAPIs], item => item.name.toLowerCase()))
 
 					if (this.nodeIdentifierCache.has(packageJsonPath)) {
 						this.nodeIdentifierCache.set(packageJsonPath, this.nodeIdentifierCache.get(packageJsonPath).filter(item => dependencyNameList.includes(item.name)))
@@ -267,8 +258,6 @@ export default class JavaScript implements Language {
 		if (hasFileExtensionOf(document, await this.getCompatibleFileExtensions()) === false) {
 			return null
 		}
-
-		await this.setItems()
 
 		const fileItems = (() => {
 			const workPath = _.trimStart(document.fileName.substring(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath.length).replace(/\\/g, fp.posix.sep), fp.posix.sep)
@@ -299,9 +288,7 @@ export default class JavaScript implements Language {
 	}
 
 	async addItem(filePath: string) {
-		if (this.fileCache) {
-			await this.setCache(filePath)
-		}
+		await this.setCache(filePath)
 
 		if (fp.basename(filePath) === 'package.json') {
 			await this.setItems()
@@ -310,12 +297,10 @@ export default class JavaScript implements Language {
 		await this.setImportPattern(await JavaScript.parse(filePath))
 	}
 
-	cutItem(filePath: string) {
+	async cutItem(filePath: string) {
 		this.fileIdentifierCache.delete(filePath)
 
-		if (this.fileCache) {
-			this.fileCache = this.fileCache.filter(file => file.info.fullPath !== filePath)
-		}
+		this.fileCache = this.fileCache.filter(file => file.info.fullPath !== filePath)
 
 		if (fp.basename(filePath) === 'package.json') {
 			getPackageJsonList.cache.clear()
@@ -481,7 +466,7 @@ export default class JavaScript implements Language {
 	}
 
 	reset() {
-		this.fileCache = null
+		this.fileCache = []
 		this.nodeIdentifierCache.clear()
 
 		nodeModuleCache.clear()
@@ -494,6 +479,8 @@ export default class JavaScript implements Language {
 				custom[field] = 0
 			}
 		}
+
+		this.setItems()
 	}
 
 	protected async createLanguageSpecificFileFilter() {

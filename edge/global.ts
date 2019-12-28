@@ -2,7 +2,6 @@ import * as _ from 'lodash'
 import * as fp from 'path'
 import * as vscode from 'vscode'
 
-import FileInfo from './FileInfo'
 import * as JavaScript from './JavaScript'
 import * as Stylus from './Stylus'
 
@@ -14,10 +13,10 @@ export interface ExtensionLevelConfigurations {
 }
 
 export interface Language {
-	setItems?(): Promise<void>
+	setItems(): Promise<void>
 	getItems(document: vscode.TextDocument): Promise<Array<Item> | null>
-	addItem?(filePath: string): void
-	cutItem?(filePath: string): void
+	addItem(filePath: string): Promise<void>
+	cutItem(filePath: string): Promise<void>
 	fixImport?(editor: vscode.TextEditor, document: vscode.TextDocument, cancellationToken: vscode.CancellationToken): Promise<boolean | null>
 	convertImport?(editor: vscode.TextEditor): Promise<boolean | null>
 	reset(): void
@@ -25,36 +24,6 @@ export interface Language {
 
 export interface Item extends vscode.QuickPickItem {
 	addImport(editor: vscode.TextEditor, language: Language): Promise<null | undefined | void>
-}
-
-// TODO: remove this
-export function getSortingLogic<T extends { fileInfo: FileInfo }>(rootPath: string) {
-	return [
-		(item: T) => (item.fileInfo.directoryPath === rootPath
-			? '!'
-			: item.fileInfo.directoryPath.substring(rootPath.length).toLowerCase()),
-		(item: T) => (item.fileInfo.fileNameWithoutExtension === 'index' ? 1 : 0),
-		(item: T) => (/^\W*[a-z]/.test(item.fileInfo.fileNameWithExtension)
-			? item.fileInfo.fileNameWithExtension.toUpperCase()
-			: item.fileInfo.fileNameWithExtension.toLowerCase()),
-	]
-}
-
-export function getShortList<T extends { fileInfo: FileInfo }>(items: Array<T>, documentFileInfo: FileInfo) {
-	const documentFileWords = _.words(documentFileInfo.fileNameWithoutExtension)
-
-	const itemsFromCurrentDirectory = _.chain(items)
-		.filter(item => item.fileInfo.directoryPath === documentFileInfo.directoryPath)
-		.sortBy(item => {
-			const fileWords = _.words(item.fileInfo.fileNameWithoutExtension)
-			return documentFileWords.length - _.intersection(documentFileWords, fileWords).length
-		})
-		.value()
-
-	const itemsFromSubDirectories = items
-		.filter(item => item.fileInfo.directoryPath.startsWith(documentFileInfo.directoryPath + fp.sep))
-
-	return itemsFromCurrentDirectory.concat(itemsFromSubDirectories)
 }
 
 export async function findFilesRoughly(filePath: string, fileExtensions?: Array<string>): Promise<Array<string>> {

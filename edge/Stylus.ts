@@ -5,7 +5,7 @@ import { Parser, nodes as Nodes } from 'stylus'
 import * as vscode from 'vscode'
 
 import FileInfo from './FileInfo'
-import { ExtensionLevelConfigurations, Language, Item, getSortingLogic, findFilesRoughly } from './global'
+import { ExtensionLevelConfigurations, Language, Item, findFilesRoughly } from './global'
 
 export interface StylusConfigurations {
 	syntax: '@import' | '@require'
@@ -19,10 +19,19 @@ const SUPPORTED_LANGUAGE = /^stylus$/
 
 export default class Stylus implements Language {
 	private configs: StylusConfigurations
-	private fileItemCache: Array<FileItem>
+	private fileItemCache: Array<FileItem> = []
 
 	constructor(extensionLevelConfigs: ExtensionLevelConfigurations) {
 		this.configs = extensionLevelConfigs.stylus
+	}
+
+	async setItems() {
+		const fileLinks = await vscode.workspace.findFiles('**/*.{styl,css,jpg,jpeg,png,gif,svg,otf,ttf,woff,woff2,eot}')
+
+		for (const fileLink of fileLinks) {
+			const rootPath = vscode.workspace.getWorkspaceFolder(fileLink).uri.fsPath
+			this.fileItemCache.push(new FileItem(new FileInfo(fileLink.fsPath), rootPath, this.configs))
+		}
 	}
 
 	async getItems(document: vscode.TextDocument) {
@@ -31,23 +40,13 @@ export default class Stylus implements Language {
 		}
 
 		const documentFileInfo = new FileInfo(document.fileName)
-		const rootPath = vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath
-
-		if (!this.fileItemCache) {
-			const fileLinks = await vscode.workspace.findFiles('**/*.{styl,css,jpg,jpeg,png,gif,svg,otf,ttf,woff,woff2,eot}')
-
-			this.fileItemCache = _.chain(fileLinks)
-				.map(fileLink => new FileItem(new FileInfo(fileLink.fsPath), rootPath, this.configs))
-				.sortBy(getSortingLogic(rootPath))
-				.value()
-		}
 
 		const filteredFileItems = _.reject(this.fileItemCache, item => item.fileInfo.fullPath === documentFileInfo.fullPath)
 
 		return filteredFileItems
 	}
 
-	addItem(filePath: string) {
+	async addItem(filePath: string) {
 		if (this.fileItemCache) {
 			const fileInfo = new FileInfo(filePath)
 			const rootPath = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath)).uri.fsPath
@@ -55,7 +54,7 @@ export default class Stylus implements Language {
 		}
 	}
 
-	cutItem(filePath: string) {
+	async cutItem(filePath: string) {
 		if (this.fileItemCache) {
 			const fileInfo = new FileInfo(filePath)
 			const index = this.fileItemCache.findIndex(item => item.fileInfo.fullPath === fileInfo.fullPath)
@@ -157,7 +156,9 @@ export default class Stylus implements Language {
 	}
 
 	reset() {
-		this.fileItemCache = null
+		this.fileItemCache = []
+
+		this.setItems()
 	}
 
 	static parse(code: string) {

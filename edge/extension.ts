@@ -38,26 +38,18 @@ export function activate(context: vscode.ExtensionContext) {
 				await language.cutItem(filePath)
 			}
 
-			if (!removed && language.addItem) {
+			if (!removed) {
 				await language.addItem(filePath)
-			}
-
-			if (!language.cutItem && !language.addItem) {
-				await language.reset()
 			}
 		}))
 	})
 	context.subscriptions.push(fileChanges)
 
 	vscode.window.withProgress({
-		title: 'Preparing Import Quicken',
+		title: 'Scanning Files (Import Quicken)',
 		location: vscode.ProgressLocation.Window,
 	}, async () => {
-		await Promise.all(_.compact(languages.map(language =>
-			(language.setItems
-				? language.setItems()
-				: null)
-		)))
+		await Promise.all(languages.map(language => language.setItems()))
 
 		initializing = false
 
@@ -119,26 +111,6 @@ export function activate(context: vscode.ExtensionContext) {
 			return null
 		}
 
-		// Show the progress bar if the operation takes too long
-		let progressIsVisible = !initializing
-		let hideProgress = () => {
-			progressIsVisible = false
-		}
-		setTimeout(() => {
-			if (progressIsVisible === false) {
-				return
-			}
-
-			vscode.window.withProgress({
-				title: 'Scanning files...',
-				location: vscode.ProgressLocation.Notification,
-			}, async () => {
-				await new Promise(resolve => {
-					hideProgress = resolve
-				})
-			})
-		}, 1500)
-
 		for (const language of languages) {
 			const items = await language.getItems(document)
 			if (!items) {
@@ -147,11 +119,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 			// Stop processing if the active editor has been changed
 			if (editor !== vscode.window.activeTextEditor) {
-				hideProgress()
 				return null
 			}
-
-			hideProgress()
 
 			const picker = vscode.window.createQuickPick<Item>()
 			picker.placeholder = 'Type a file path or node module name'
@@ -174,8 +143,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 			break
 		}
-
-		hideProgress()
 	}))
 
 	context.subscriptions.push(vscode.commands.registerCommand('importQuicken.fixImport', async () => {
