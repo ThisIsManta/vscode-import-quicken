@@ -6,7 +6,7 @@ import * as ts from 'typescript'
 import * as vscode from 'vscode'
 
 import FileInfo from './FileInfo'
-import { ExtensionLevelConfigurations, Language, Item, findFilesRoughly, hasFileExtensionOf } from './global'
+import { ExtensionLevelConfigurations, Language, Item, findFilesRoughly, hasFileExtensionOf, tryGetFullPath } from './global'
 
 export interface JavaScriptConfigurations {
 	filter: Readonly<{ [key: string]: string }>
@@ -1759,53 +1759,6 @@ function getNamedImportedIdentifiersFromNodeModule(codeTree: ts.SourceFile) {
 		})
 		.compact()
 		.value()
-}
-
-async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, cache?: Map<string, string>): Promise<string> {
-	const fullPath = fp.resolve(...pathList)
-
-	if (cache) {
-		if (cache.has(fullPath)) {
-			return cache.get(fullPath)
-		}
-
-		if (cache.has(fullPath + preferredExtension)) {
-			return cache.get(fullPath + preferredExtension)
-		}
-	}
-
-	if (await fs.exists(fullPath)) {
-		const fileStat = await fs.lstat(fullPath)
-		if (fileStat.isFile()) {
-			if (cache) {
-				cache.set(fullPath, fullPath)
-			}
-
-			return fullPath
-
-		} else if (fileStat.isDirectory()) {
-			const indexPath = await tryGetFullPath([...pathList, 'index'], preferredExtension)
-			if (indexPath !== undefined) {
-				if (cache) {
-					cache.set(fullPath, indexPath)
-				}
-
-				return indexPath
-			}
-		}
-	}
-
-	const possibleExtensions = _.uniq([preferredExtension.toLowerCase(), 'tsx', 'ts', 'jsx', 'js'])
-	for (const extension of possibleExtensions) {
-		const fullPathWithExtension = fullPath + '.' + extension
-		if (await fs.exists(fullPathWithExtension) && (await fs.lstat(fullPathWithExtension)).isFile()) {
-			if (cache) {
-				cache.set(fullPath, fullPathWithExtension)
-			}
-
-			return fullPathWithExtension
-		}
-	}
 }
 
 function getDuplicateImport(existingImports: Array<ImportStatementForReadOnly>, path: string) {

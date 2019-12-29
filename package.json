@@ -72,39 +72,6 @@
 						}
 					},
 					"default": {}
-				},
-				"importQuicken.stylus.syntax": {
-					"description": "Insert either @import or @require. See also http://stylus-lang.com/docs/import.html",
-					"type": "string",
-					"enum": [
-						"@import",
-						"@require"
-					],
-					"default": "@import"
-				},
-				"importQuicken.stylus.fileExtension": {
-					"description": "Insert STYL file extension to the path.",
-					"type": "boolean",
-					"default": true
-				},
-				"importQuicken.stylus.indexFile": {
-					"description": "Insert \"index\" file name and also its extension to the path.",
-					"type": "boolean",
-					"default": true
-				},
-				"importQuicken.stylus.quoteCharacter": {
-					"description": "Insert either single quotes or double quotes as a string enclosure.",
-					"type": "string",
-					"enum": [
-						"single",
-						"double"
-					],
-					"default": "double"
-				},
-				"importQuicken.stylus.semiColons": {
-					"description": "Insert statement-ending semi-colons.",
-					"type": "boolean",
-					"default": true
 				}
 			}
 		},

@@ -3,6 +3,7 @@
 - Fix duplicate dependencies in package.json.
 - Add reading type definitions from `typings` in package.json.
 - Amend activation point from checking an active file to checking the existence of package.json
+- Add syntax guessing for Stylus.
 - Amend non-blocking initialization process.
 - Remove list sorting logic for performance.
 
@@ -11,10 +12,10 @@
 - Fix unable to recognize newly created files.
 
 ## 1.1.7
-- Improve guessing syntax performance.
+- Improve syntax guessing performance for JavaScript.
 
 ## 1.1.6
-- Improve guessing syntax performance.
+- Improve syntax guessing performance for JavaScript.
 - Fix reading wrong type definitions from another node_modules.
 
 ## 1.1.5

@@ -1,4 +1,5 @@
 import * as _ from 'lodash'
+import { fs } from 'mz'
 import * as fp from 'path'
 import * as vscode from 'vscode'
 
@@ -63,4 +64,29 @@ export async function findFilesRoughly(filePath: string, fileExtensions?: Array<
 
 export function hasFileExtensionOf(document: vscode.TextDocument, extensions: Array<string>) {
 	return extensions.indexOf(_.trimStart(fp.extname(document.fileName), '.').toLowerCase()) >= 0
+}
+
+export async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, defaultExtension = ['tsx', 'ts', 'jsx', 'js']): Promise<string> {
+	const fullPath = fp.resolve(...pathList)
+
+	if (await fs.exists(fullPath)) {
+		const fileStat = await fs.lstat(fullPath)
+		if (fileStat.isFile()) {
+			return fullPath
+
+		} else if (fileStat.isDirectory()) {
+			const indexPath = await tryGetFullPath([...pathList, 'index'], preferredExtension)
+			if (indexPath !== undefined) {
+				return indexPath
+			}
+		}
+	}
+
+	const possibleExtensions = _.uniq([preferredExtension.toLowerCase(), ...defaultExtension])
+	for (const extension of possibleExtensions) {
+		const fullPathWithExtension = fullPath + '.' + extension
+		if (await fs.exists(fullPathWithExtension) && (await fs.lstat(fullPathWithExtension)).isFile()) {
+			return fullPathWithExtension
+		}
+	}
 }

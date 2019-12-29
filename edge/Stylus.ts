@@ -5,17 +5,19 @@ import { Parser, nodes as Nodes } from 'stylus'
 import * as vscode from 'vscode'
 
 import FileInfo from './FileInfo'
-import { ExtensionLevelConfigurations, Language, Item, findFilesRoughly } from './global'
+import { ExtensionLevelConfigurations, Language, Item, findFilesRoughly, tryGetFullPath } from './global'
 
-export interface StylusConfigurations {
-	syntax: '@import' | '@require'
-	fileExtension: boolean
-	indexFile: boolean
-	quoteCharacter: 'single' | 'double'
-	semiColons: boolean
-}
+export interface StylusConfigurations { }
 
 const SUPPORTED_LANGUAGE = /^stylus$/
+
+let importSyntaxCount = 0
+let requireSyntaxCount = 0
+let singleQuoteCount = 0
+let doubleQuoteCount = 0
+let indexFileCount = 0
+let fileExtensionCount = 0
+let semiColonCount = 0
 
 export default class Stylus implements Language {
 	private configs: StylusConfigurations
@@ -31,6 +33,60 @@ export default class Stylus implements Language {
 		for (const fileLink of fileLinks) {
 			const rootPath = vscode.workspace.getWorkspaceFolder(fileLink).uri.fsPath
 			this.fileItemCache.push(new FileItem(new FileInfo(fileLink.fsPath), rootPath, this.configs))
+
+			if (fp.extname(fileLink.fsPath) !== '.styl') {
+				continue
+			}
+
+			const fileText = await fs.readFile(fileLink.fsPath, 'utf-8')
+
+			const codeTree = Stylus.parse(fileText)
+			if (!codeTree) {
+				continue
+			}
+
+			const existingImports = getExistingImportsAndUrls(codeTree)
+			const lines = fileText.split(/\r?\n/)
+			for (const node of existingImports) {
+				if (node instanceof Nodes.Import === false) {
+					continue
+				}
+
+				const [, syntax, semiColon] = lines[node.lineno - 1].match(/@(import|require)\s+(?:'|").+?(?:'|")\s*(;?)/) || []
+
+				if (syntax === 'import') {
+					importSyntaxCount += 1
+
+				} else {
+					requireSyntaxCount += 1
+				}
+
+				if (node.path?.nodes[0]?.quote === '"') {
+					doubleQuoteCount += 1
+
+				} else {
+					singleQuoteCount += 1
+				}
+
+				const relativePath = node.path.hash
+				const fullPath = await tryGetFullPath([fp.dirname(fileLink.fsPath), relativePath], 'styl', [])
+				if (fullPath) {
+					if (fp.basename(fullPath) === 'index.styl') {
+						if (/(^index|(\\|\/)index)(\.styl)?$/.test(relativePath)) {
+							indexFileCount += 1
+							fileExtensionCount += (relativePath.endsWith('.styl') ? 1 : -1)
+
+						} else {
+							indexFileCount -= 1
+						}
+
+					} else {
+						fileExtensionCount += (relativePath.endsWith('.styl') ? 1 : -1)
+					}
+				}
+
+				semiColonCount += (semiColon ? 1 : -1)
+			}
 		}
 	}
 
@@ -184,11 +240,11 @@ class FileItem implements Item {
 
 		this.description = _.trim(fp.dirname(this.fileInfo.fullPath.substring(rootPath.length)), fp.sep)
 
-		if (this.options.indexFile === false && this.fileInfo.fileNameWithExtension === 'index.styl') {
+		if (indexFileCount < 0 && this.fileInfo.fileNameWithExtension === 'index.styl') {
 			this.label = this.fileInfo.directoryName
 			this.description = _.trim(this.fileInfo.fullPath.substring(rootPath.length), fp.sep)
 
-		} else if (this.options.fileExtension === false && this.fileInfo.fileExtensionWithoutLeadingDot === 'styl') {
+		} else if (fileExtensionCount < 0 && this.fileInfo.fileExtensionWithoutLeadingDot === 'styl') {
 			this.label = this.fileInfo.fileNameWithoutExtension
 
 		} else {
@@ -199,10 +255,10 @@ class FileItem implements Item {
 	getRelativePath(directoryPathOfWorkingDocument: string) {
 		let path = this.fileInfo.getRelativePath(directoryPathOfWorkingDocument)
 
-		if (this.options.indexFile === false && this.fileInfo.fileNameWithExtension === 'index.styl') {
+		if (indexFileCount < 0 && this.fileInfo.fileNameWithExtension === 'index.styl') {
 			path = fp.dirname(path)
 
-		} else if (this.options.fileExtension === false && this.fileInfo.fileExtensionWithoutLeadingDot === 'styl') {
+		} else if (fileExtensionCount < 0 && this.fileInfo.fileExtensionWithoutLeadingDot === 'styl') {
 			path = path.replace(/\.styl$/i, '')
 		}
 
@@ -214,7 +270,7 @@ class FileItem implements Item {
 
 		const directoryPathOfWorkingDocument = new FileInfo(document.fileName).directoryPath
 
-		const quote = this.options.quoteCharacter === 'single' ? '\'' : '"'
+		const quote = singleQuoteCount > doubleQuoteCount ? '\'' : '"'
 
 		if (/^(styl|css)$/i.test(this.fileInfo.fileExtensionWithoutLeadingDot)) {
 			const path = this.getRelativePath(directoryPathOfWorkingDocument)
@@ -236,7 +292,7 @@ class FileItem implements Item {
 				}
 			}
 
-			const snippet = `@${this.options.syntax ? 'import' : 'require'} ${quote}${path}${quote}${this.options.semiColons ? ';' : ''}${document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'}`
+			const snippet = `@${importSyntaxCount > requireSyntaxCount ? 'import' : 'require'} ${quote}${path}${quote}${semiColonCount >= 0 ? ';' : ''}${document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'}`
 
 			await editor.edit(worker => worker.insert(position, snippet))
 
@@ -265,17 +321,23 @@ function getExistingImportsAndUrls(node: any, visitedNodes = new Set()) {
 	if (node instanceof Nodes.Import || node instanceof Nodes.Call && node.name === 'url' && node.args && node.args.nodes.length === 1) {
 		return [node]
 
+	} else if (node.nodeName === 'hsla' || node.nodeName === 'rgba') { // Prevent infinite recursion
+		return []
+
 	} else if (_.isObject(node)) {
 		const results = []
-		for (const prop in node) {
-			if (_.isObject(node[prop])) {
-				results.push(...getExistingImportsAndUrls(node[prop], visitedNodes))
+		for (const key in node) {
+			if (key === 'first' || key === 'parent' || _.isFunction(node[key])) {
+				continue
+			}
+
+			if (_.isObject(node[key])) {
+				results.push(...getExistingImportsAndUrls(node[key], visitedNodes))
 			}
 		}
 
 		return results
-
-	} else {
-		return []
 	}
+
+	return []
 }
