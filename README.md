@@ -8,6 +8,8 @@ This extension is heavily inspired by [**Quick Require**](https://marketplace.vi
 - **Fix broken import/require statements**
 - **Convert require to import statements**
 
+Note that the extension may not support multi-folder workspace.
+
 ## Basic usage
 
 Simply press _Ctrl+Shift+I_ on your keyboard to list all matching identifiers, and choose one file that you would like to insert a snippet based on it.
