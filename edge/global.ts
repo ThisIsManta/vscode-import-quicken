@@ -13,14 +13,13 @@ export interface ExtensionLevelConfigurations {
 	stylus: Stylus.StylusConfigurations
 }
 
-export interface Language {
+export interface Language extends vscode.Disposable {
 	setItems(): Promise<void>
 	getItems(document: vscode.TextDocument): Promise<Array<Item> | null>
 	addItem(filePath: string): Promise<void>
 	cutItem(filePath: string): Promise<void>
 	fixImport?(editor: vscode.TextEditor, document: vscode.TextDocument, cancellationToken: vscode.CancellationToken): Promise<boolean | null>
 	convertImport?(editor: vscode.TextEditor): Promise<boolean | null>
-	reset(): void
 }
 
 export interface Item extends vscode.QuickPickItem {

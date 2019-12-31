@@ -211,10 +211,8 @@ export default class Stylus implements Language {
 		return true
 	}
 
-	reset() {
+	dispose() {
 		this.fileItemCache = []
-
-		this.setItems()
 	}
 
 	static parse(code: string) {

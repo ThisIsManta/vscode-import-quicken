@@ -471,7 +471,7 @@ export default class JavaScript implements Language {
 		return true
 	}
 
-	reset() {
+	dispose() {
 		this.fileCache = []
 		this.nodeIdentifierCache.clear()
 
