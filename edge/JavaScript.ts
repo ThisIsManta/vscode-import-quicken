@@ -1407,6 +1407,36 @@ function δ(name: string) {
 	return name === 'default' ? '*default' : name
 }
 
+async function getOriginalAndReferencedCodeList(originalCodeTree: ts.SourceFile, processingFilePaths = new Set<string>()) {
+	const codeList: Array<ts.Statement> = []
+
+	// Prevent looping indefinitely because of a cyclic dependency
+	if (processingFilePaths.has(originalCodeTree.fileName)) {
+		return []
+
+	} else {
+		processingFilePaths.add(originalCodeTree.fileName)
+	}
+
+	for (const { fileName } of originalCodeTree.referencedFiles) {
+		const path = await tryGetFullPath([fp.dirname(originalCodeTree.fileName), fileName], 'd.ts')
+		if (!path) {
+			continue
+		}
+
+		const referencedCodeTree = await JavaScript.parse(path)
+		if (!referencedCodeTree) {
+			continue
+		}
+
+		codeList.push(...(await getOriginalAndReferencedCodeList(referencedCodeTree, processingFilePaths)))
+	}
+
+	codeList.push(...originalCodeTree.statements)
+
+	return codeList
+}
+
 async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cachedFilePaths = new Map<FilePath, IdentifierMap>(), processingFilePaths = new Set<string>()) {
 	const exportedNames: IdentifierMap = new Map()
 
@@ -1438,8 +1468,10 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 
 	const importedNames: IdentifierMap = new Map()
 
+	const codeList = await getOriginalAndReferencedCodeList(codeTree)
+
 	try {
-		for (const node of codeTree.statements) {
+		for (const node of codeList) {
 			if (ts.isImportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) && node.importClause) {
 				if (/^[./]/.test(node.moduleSpecifier.text) === false) {
 					continue
