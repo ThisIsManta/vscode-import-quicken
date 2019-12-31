@@ -1,3 +1,4 @@
+import * as cp from 'child_process'
 import * as glob from 'glob'
 import * as _ from 'lodash'
 import { fs } from 'mz'
@@ -228,8 +229,21 @@ export default class JavaScript implements Language {
 						.uniq()
 						.value()
 
-					if (dependencyNameList.some(name => name === '@types/node')) {
-						nodeModuleItems.push(...(await getNodeJsAPIs(nodeModulePathList)).map(name => new NodeModuleItem(name)))
+					try {
+						if (dependencyNameList.some(name => name === '@types/node')) {
+							const globalModulePath = cp.execSync('npm list -g', { encoding: 'utf-8' }).split('\n')[0].trim()
+
+							for (const modulePath of _.compact([...nodeModulePathList, globalModulePath])) {
+								const nodeJsAPIs = await getNodeJsAPIs(fp.join(modulePath, 'node_modules', '@types/node', 'index.d.ts'))
+								if (nodeJsAPIs.length > 0) {
+									nodeModuleItems.push(...nodeJsAPIs.map(name => new NodeModuleItem(name)))
+									break
+								}
+							}
+						}
+
+					} catch (error) {
+						console.error(error)
 					}
 
 					for (const name of dependencyNameList) {
@@ -1838,14 +1852,16 @@ function focusAt(node: { getStart: () => number, getEnd: () => number }, documen
 	)
 }
 
-async function getNodeJsAPIs(possibleModulePathList: Array<string>) {
-	for (const modulePath of possibleModulePathList) {
-		const codeTree = await JavaScript.parse(fp.join(modulePath, 'node_modules', '@types/node', 'index.d.ts'))
-		if (!codeTree) {
-			continue
-		}
+async function getNodeJsAPIs(typeDefinitionPath: string): Promise<Array<string>> {
+	const codeTree = await JavaScript.parse(typeDefinitionPath)
+	if (!codeTree) {
+		return []
+	}
 
-		return _.compact(codeTree.statements.map(node => {
+	const fromOtherFiles = _.flatten(await Promise.all(codeTree.referencedFiles.map(({ fileName }) => getNodeJsAPIs(fp.join(fp.dirname(typeDefinitionPath), fileName)))))
+
+	return _.chain(codeTree.statements)
+		.map(node => {
 			if (
 				ts.isModuleDeclaration(node) &&
 				node.modifiers && node.modifiers.length > 0 &&
@@ -1855,10 +1871,11 @@ async function getNodeJsAPIs(possibleModulePathList: Array<string>) {
 				// Return XXX in `declare module "XXX" { ... }`
 				return node.name.text
 			}
-		}))
-	}
-
-	return []
+		})
+		.union(fromOtherFiles)
+		.compact()
+		.difference(['NodeJS', 'setTimeout', 'setImmediate'])
+		.value()
 }
 
 function getClosestPackageJson<T extends { packageJsonPath: string }>(filePath: string, packageJsonList: Array<T>) {

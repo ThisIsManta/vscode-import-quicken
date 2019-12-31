@@ -1,4 +1,7 @@
-## 1.2.1
+## 1.4.0
+- Add Node.js APIs to the list from the global node_modules.
+
+## 1.3.0
 - Fix unable to add recently used named imports.
 - Fix duplicate dependencies in package.json.
 - Add reading type definitions from `typings` in package.json.
