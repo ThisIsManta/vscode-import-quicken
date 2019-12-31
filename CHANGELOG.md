@@ -1,5 +1,6 @@
 ## 1.4.0
 - Add Node.js APIs to the list from the global node_modules.
+- Amend list ordering so that node modules are placed first.
 
 ## 1.3.0
 - Fix unable to add recently used named imports.

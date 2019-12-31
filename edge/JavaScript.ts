@@ -111,10 +111,10 @@ export default class JavaScript implements Language {
 				this.nodeIdentifierCache.set(packageJsonPath, [])
 			}
 
-			const nodeItems = this.nodeIdentifierCache.get(packageJsonPath)
+			const nodeIdentifierItems = this.nodeIdentifierCache.get(packageJsonPath)
 			for (const { identifier, name } of getNamedImportedIdentifiersFromNodeModule(codeTree)) {
-				if (nodeItems.some(item => item.identifier === identifier && item.name === name) === false) {
-					nodeItems.push(new NodeIdentifierItem(name, identifier))
+				if (nodeIdentifierItems.some(item => item.identifier === identifier && item.name === name) === false) {
+					nodeIdentifierItems.push(new NodeIdentifierItem(name, identifier))
 				}
 			}
 		}
@@ -202,17 +202,6 @@ export default class JavaScript implements Language {
 	setItems() {
 		if (!this.workingThread) {
 			const λ = async () => {
-				if (this.fileCache.length === 0) {
-					const fileLinks = _.filter(
-						await vscode.workspace.findFiles('**/*', '.*' /* Exclude top-level files or directories that start with a period */),
-						await this.createLanguageSpecificFileFilter()
-					)
-
-					for (const link of fileLinks) {
-						await this.setCache(link.fsPath)
-					}
-				}
-
 				const packageJsonList = await getPackageJsonList()
 				for (const { packageJsonPath, nodeModulePathList } of packageJsonList) {
 					if (nodeModuleCache.has(packageJsonPath)) {
@@ -254,8 +243,28 @@ export default class JavaScript implements Language {
 						nodeModuleItems.push(new NodeModuleItem(name))
 					}
 
-					if (this.nodeIdentifierCache.has(packageJsonPath)) {
-						this.nodeIdentifierCache.set(packageJsonPath, this.nodeIdentifierCache.get(packageJsonPath).filter(item => dependencyNameList.includes(item.name)))
+					nodeModuleCache.set(packageJsonPath, _.sortBy(nodeModuleItems, item => item.name.toLowerCase()))
+				}
+
+				if (this.fileCache.length === 0) {
+					const fileLinks = _.filter(
+						await vscode.workspace.findFiles('**/*', '.*' /* Exclude top-level files or directories that start with a period */),
+						await this.createLanguageSpecificFileFilter()
+					)
+
+					for (const link of fileLinks) {
+						await this.setCache(link.fsPath)
+					}
+				}
+
+				for (const { packageJsonPath } of packageJsonList) {
+					if (this.nodeIdentifierCache.has(packageJsonPath) && nodeModuleCache.has(packageJsonPath)) {
+						const dependencyNameList = nodeModuleCache.get(packageJsonPath).map(item => item.name)
+						const nodeIdentifiers = _.chain(this.nodeIdentifierCache.get(packageJsonPath))
+							.filter(item => dependencyNameList.includes(item.name))
+							.sortBy(item => item.name.toLowerCase(), item => item.identifier.toLowerCase())
+							.value()
+						this.nodeIdentifierCache.set(packageJsonPath, nodeIdentifiers)
 					}
 				}
 
@@ -295,9 +304,9 @@ export default class JavaScript implements Language {
 		const nodeIdentifierItems = packageJsonPath && nodeModuleCache.has(packageJsonPath) && this.nodeIdentifierCache.get(packageJsonPath) || []
 
 		return [
-			...fileItems,
 			...nodeModuleItems,
 			...nodeIdentifierItems,
+			...fileItems,
 		]
 	}
 
@@ -1257,6 +1266,7 @@ class NodeModuleItem implements Item {
 
 class NodeIdentifierItem extends NodeModuleItem {
 	readonly identifier: string
+	readonly detail: string
 
 	constructor(name: string, identifier: string) {
 		super(name)
