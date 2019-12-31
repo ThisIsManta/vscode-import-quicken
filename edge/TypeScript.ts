@@ -1,4 +1,5 @@
 import * as _ from 'lodash'
+import { Minimatch } from 'minimatch'
 import { fs } from 'mz'
 import * as fp from 'path'
 import * as ts from 'typescript'
@@ -7,10 +8,10 @@ import * as vscode from 'vscode'
 import { ExtensionLevelConfigurations } from './global'
 import JavaScript from './JavaScript'
 
-const JAVASCRIPT_EXTENSION = /\.jsx?$/i
-const TYPESCRIPT_EXTENSION = /\.tsx?$/i
-
 export default class TypeScript extends JavaScript {
+	private tsconfigCache = new Map<string, { compilerOptions: ts.CompilerOptions, include?: Array<string>, exclude?: Array<string> }>()
+	private tsconfigWatcher: vscode.FileSystemWatcher
+
 	constructor(extensionLevelConfig: ExtensionLevelConfigurations) {
 		super({
 			...extensionLevelConfig,
@@ -24,47 +25,99 @@ export default class TypeScript extends JavaScript {
 		})
 	}
 
-	async getCompatibleFileExtensions() {
-		if (await this.checkIfAllowJs()) {
+	async setItems() {
+		const φ = async (path: string) => {
+			const { config, error } = ts.parseConfigFileTextToJson(path, await fs.readFile(path, 'utf-8'))
+			if (config && !error) {
+				this.tsconfigCache.set(path, config)
+			}
+		}
+
+		vscode.workspace.findFiles('**/tsconfig.json').then(links => {
+			for (const link of links) {
+				φ(link.fsPath)
+			}
+		})
+
+		this.tsconfigWatcher = vscode.workspace.createFileSystemWatcher('**/tsconfig.json')
+		this.tsconfigWatcher.onDidCreate(link => {
+			φ(link.fsPath)
+		})
+		this.tsconfigWatcher.onDidChange(link => {
+			φ(link.fsPath)
+		})
+		this.tsconfigWatcher.onDidDelete(link => {
+			this.tsconfigCache.delete(link.fsPath)
+		})
+
+		super.setItems()
+	}
+
+	dispose() {
+		super.dispose()
+
+		this.tsconfigCache.clear()
+
+		if (this.tsconfigWatcher) {
+			this.tsconfigWatcher.dispose()
+		}
+	}
+
+	getCompatibleFileExtensions() {
+		const tsconfig = this.getTypeScriptConfigurations()
+		if (tsconfig?.compilerOptions.allowJs) {
 			return ['ts', 'tsx', 'js', 'jsx']
 		}
 
 		return ['ts', 'tsx']
 	}
 
-	async checkIfImportDefaultIsPreferredOverNamespace() {
-		const tsConfig = await this.getTypeScriptConfigurations()
-		return _.get<boolean>(tsConfig, 'compilerOptions.esModuleInterop', false)
+	checkIfImportDefaultIsPreferredOverNamespace() {
+		const tsconfig = this.getTypeScriptConfigurations()
+		return tsconfig?.compilerOptions.esModuleInterop ?? false
 	}
 
-	async checkIfAllowJs() {
-		const tsConfig = await this.getTypeScriptConfigurations()
-		return _.get<boolean>(tsConfig, 'compilerOptions.allowJs', false)
-	}
+	protected createFileFilter(document: vscode.TextDocument) {
+		const baseFilter = super.createFileFilter(document)
 
-	protected async createFileFilter() {
-		const baseFilter = await super.createFileFilter()
+		const tsconfig = this.getTypeScriptConfigurations(document)
 
-		if (await this.checkIfAllowJs()) {
-			return baseFilter
+		const jsAllowed = tsconfig?.compilerOptions.allowJs
+		const jsExtension = /\.jsx?$/i
 
-		} else {
-			// Reject JS files
-			return (filePath: string) => !JAVASCRIPT_EXTENSION.test(filePath) && baseFilter(filePath)
+		const inclusionList = tsconfig?.include?.map(pattern =>
+			new Minimatch(fp.resolve(fp.dirname(tsconfig.filePath), pattern.replace(/\//g, fp.sep))))
+		const exclusionList = tsconfig?.exclude?.map(pattern =>
+			new Minimatch(fp.resolve(fp.dirname(tsconfig.filePath), pattern.replace(/\//g, fp.sep))))
+
+		return (filePath: string) => {
+			if (!baseFilter(filePath)) {
+				return false
+			}
+
+			if (!jsAllowed && jsExtension.test(filePath)) {
+				return false
+			}
+
+			if (inclusionList && !inclusionList.some(pattern => pattern.match(filePath.replace(/\\/g, fp.posix.sep)))) {
+				return false
+			}
+
+			if (exclusionList && exclusionList.some(pattern => pattern.match(filePath.replace(/\\/g, fp.posix.sep)))) {
+				return false
+			}
+
+			return true
 		}
 	}
 
-	private async getTypeScriptConfigurations() {
-		const pathList = await vscode.workspace.findFiles('**/tsconfig.json')
-		const path = _.chain(pathList)
-			.map(link => link.fsPath)
-			.sortBy(path => -fp.dirname(path).split(fp.sep).length)
-			.find(path => vscode.window.activeTextEditor.document.uri.fsPath.startsWith(fp.dirname(path) + fp.sep))
-			.value()
-		if (path) {
-			const { config, error } = ts.parseConfigFileTextToJson(path, await fs.readFile(path, 'utf-8'))
-			if (config && !error) {
-				return config
+	private getTypeScriptConfigurations(document?: vscode.TextDocument) {
+		for (const [filePath, tsconfig] of _.sortBy(Array.from(this.tsconfigCache), ([path]) => -fp.dirname(path).split(fp.sep).length)) {
+			if ((document ?? vscode.window.activeTextEditor?.document).uri.fsPath.startsWith(fp.dirname(filePath) + fp.sep)) {
+				return {
+					filePath,
+					...tsconfig,
+				}
 			}
 		}
 	}

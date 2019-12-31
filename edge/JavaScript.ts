@@ -80,11 +80,11 @@ export default class JavaScript implements Language {
 		this.configs = extensionLevelConfigs.javascript
 	}
 
-	async getCompatibleFileExtensions() {
+	getCompatibleFileExtensions() {
 		return ['js', 'jsx']
 	}
 
-	async checkIfImportDefaultIsPreferredOverNamespace() {
+	checkIfImportDefaultIsPreferredOverNamespace() {
 		return true
 	}
 
@@ -247,12 +247,7 @@ export default class JavaScript implements Language {
 				}
 
 				if (this.fileCache.length === 0) {
-					const fileFilter = await this.createFileFilter()
-					const fileLinks = _.filter(
-						await vscode.workspace.findFiles('**/*'),
-						link => fileFilter(link.fsPath)
-					)
-
+					const fileLinks = await vscode.workspace.findFiles('**/*')
 					for (const link of fileLinks) {
 						await this.setCache(link.fsPath)
 					}
@@ -279,25 +274,12 @@ export default class JavaScript implements Language {
 	}
 
 	async getItems(document: vscode.TextDocument) {
-		if (hasFileExtensionOf(document, await this.getCompatibleFileExtensions()) === false) {
+		if (hasFileExtensionOf(document, this.getCompatibleFileExtensions()) === false) {
 			return null
 		}
 
-		const fileItems = (() => {
-			const workPath = _.trimStart(document.fileName.substring(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath.length).replace(/\\/g, fp.posix.sep), fp.posix.sep)
-			const TM_FILENAME_BASE = _.escapeRegExp(fp.basename(document.fileName).replace(/\..+/, ''))
-
-			for (const key in this.configs.filter) {
-				const sourceMatcher = new RegExp(key)
-				if (sourceMatcher.test(workPath)) {
-					// eslint-disable-next-line no-template-curly-in-string
-					const targetMatcher = new RegExp(this.configs.filter[key].replace('${TM_FILENAME_BASE}', TM_FILENAME_BASE))
-					return this.fileCache.filter(file => targetMatcher.test(file.info.fullPathForPOSIX))
-				}
-			}
-
-			return this.fileCache
-		})()
+		const filter = this.createFileFilter(document)
+		const fileItems = this.fileCache.filter(file => filter(file.info.fullPath))
 
 		const packageJsonList = await getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
@@ -312,10 +294,6 @@ export default class JavaScript implements Language {
 	}
 
 	async addItem(filePath: string) {
-		if (!(await this.createFileFilter())(filePath)) {
-			return
-		}
-
 		await this.setCache(filePath)
 
 		if (fp.basename(filePath) === 'package.json') {
@@ -337,14 +315,14 @@ export default class JavaScript implements Language {
 	}
 
 	async fixImport(editor: vscode.TextEditor, document: vscode.TextDocument, cancellationToken: vscode.CancellationToken) {
-		if (hasFileExtensionOf(document, await this.getCompatibleFileExtensions()) === false) {
+		if (hasFileExtensionOf(document, this.getCompatibleFileExtensions()) === false) {
 			return false
 		}
 
 		const documentFileInfo = new FileInfo(document.fileName)
 		const rootPath = vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath
 		const compatibleFileExtensions = _.sortBy(
-			await this.getCompatibleFileExtensions(),
+			this.getCompatibleFileExtensions(),
 			fileExtension => (fileExtension.startsWith(documentFileInfo.fileExtensionWithoutLeadingDot) ? 0 : 1)
 		)
 
@@ -507,13 +485,34 @@ export default class JavaScript implements Language {
 				custom[field] = 0
 			}
 		}
-
-		this.setItems()
 	}
 
-	protected async createFileFilter() {
+	protected createFileFilter(document: vscode.TextDocument) {
 		const jestInternalDirectory = /^__\w+__$/
-		return (filePath: string) => !filePath.split(fp.sep).some(name => name.startsWith('.') && !jestInternalDirectory.test(name))
+
+		const workPath = _.trimStart(document.fileName.substring(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath.length), fp.sep)
+		const TM_FILENAME_BASE = _.escapeRegExp(fp.basename(document.fileName).replace(/\..+/, ''))
+		let targetMatcher: RegExp | null = null
+		for (const key in this.configs.filter) {
+			const sourceMatcher = new RegExp(key)
+			if (sourceMatcher.test(workPath)) {
+				// eslint-disable-next-line no-template-curly-in-string
+				targetMatcher = new RegExp(this.configs.filter[key].replace('${TM_FILENAME_BASE}', TM_FILENAME_BASE))
+				break
+			}
+		}
+
+		return (filePath: string) => {
+			if (filePath.split(fp.sep).some(path => path.startsWith('.') || jestInternalDirectory.test(path))) {
+				return false
+			}
+
+			if (targetMatcher && !targetMatcher.test(filePath)) {
+				return false
+			}
+
+			return true
+		}
 	}
 
 	static async fixESLint() {
@@ -542,7 +541,7 @@ export default class JavaScript implements Language {
 	async convertImport(editor: vscode.TextEditor) {
 		const document = editor.document
 
-		if (hasFileExtensionOf(document, await this.getCompatibleFileExtensions()) === false) {
+		if (hasFileExtensionOf(document, this.getCompatibleFileExtensions()) === false) {
 			return null
 		}
 
@@ -623,7 +622,7 @@ export default class JavaScript implements Language {
 							moduleName = '* as ' + moduleName
 						}
 
-					} else if (await this.checkIfImportDefaultIsPreferredOverNamespace() === false) {
+					} else if (this.checkIfImportDefaultIsPreferredOverNamespace() === false) {
 						moduleName = '* as ' + moduleName
 					}
 				}
@@ -1051,7 +1050,7 @@ class NodeModuleItem implements Item {
 
 		const document = editor.document
 
-		const importDefaultIsPreferred = await language.checkIfImportDefaultIsPreferredOverNamespace()
+		const importDefaultIsPreferred = language.checkIfImportDefaultIsPreferredOverNamespace()
 		const typeDefinitions = await this.getTypeDefinitions(document)
 
 		const codeTree = await JavaScript.parse(document)

@@ -2,6 +2,7 @@
 - Fix did not filter out unwanted files.
 - Add Node.js APIs to the list from the global node_modules.
 - Add progress indicator while initializing.
+- Add support of `include` and `exclude` in tsconfig.json.
 - Amend list ordering so that node modules are placed first.
 
 ## 1.3.0
