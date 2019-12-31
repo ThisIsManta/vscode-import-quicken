@@ -34,9 +34,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const fileChanges = new FileChangeQueue(async ({ filePath, removed }) => {
 		await Promise.all(languages.map(async language => {
-			if (language.cutItem) {
-				await language.cutItem(filePath)
-			}
+			await language.cutItem(filePath)
 
 			if (!removed) {
 				await language.addItem(filePath)
