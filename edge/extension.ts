@@ -45,7 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
 	})
 	context.subscriptions.push(fileChanges)
 
-	vscode.window.withProgress({
+	const initializationPromise = vscode.window.withProgress({
 		title: 'Scanning Files (Import Quicken)',
 		location: vscode.ProgressLocation.Window,
 	}, async () => {
@@ -123,6 +123,7 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			const picker = vscode.window.createQuickPick<Item>()
+			picker.busy = initializing
 			picker.placeholder = 'Type a file path or node module name'
 			picker.items = items
 			picker.matchOnDescription = true
@@ -140,6 +141,13 @@ export function activate(context: vscode.ExtensionContext) {
 				})
 			})
 			picker.show()
+
+			if (initializing) {
+				initializationPromise.then(async () => {
+					picker.busy = false
+					picker.items = await language.getItems(document)
+				})
+			}
 
 			break
 		}
