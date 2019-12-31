@@ -42,13 +42,15 @@ export default class TypeScript extends JavaScript {
 		return _.get<boolean>(tsConfig, 'compilerOptions.allowJs', false)
 	}
 
-	protected async createLanguageSpecificFileFilter() {
+	protected async createFileFilter() {
+		const baseFilter = await super.createFileFilter()
+
 		if (await this.checkIfAllowJs()) {
-			return () => true
+			return baseFilter
 
 		} else {
 			// Reject JS files
-			return (link: vscode.Uri) => !JAVASCRIPT_EXTENSION.test(link.fsPath)
+			return (filePath: string) => !JAVASCRIPT_EXTENSION.test(filePath) && baseFilter(filePath)
 		}
 	}
 

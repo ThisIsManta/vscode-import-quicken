@@ -247,9 +247,10 @@ export default class JavaScript implements Language {
 				}
 
 				if (this.fileCache.length === 0) {
+					const fileFilter = await this.createFileFilter()
 					const fileLinks = _.filter(
-						await vscode.workspace.findFiles('**/*', '.*' /* Exclude top-level files or directories that start with a period */),
-						await this.createLanguageSpecificFileFilter()
+						await vscode.workspace.findFiles('**/*'),
+						link => fileFilter(link.fsPath)
 					)
 
 					for (const link of fileLinks) {
@@ -311,6 +312,10 @@ export default class JavaScript implements Language {
 	}
 
 	async addItem(filePath: string) {
+		if (!(await this.createFileFilter())(filePath)) {
+			return
+		}
+
 		await this.setCache(filePath)
 
 		if (fp.basename(filePath) === 'package.json') {
@@ -506,8 +511,9 @@ export default class JavaScript implements Language {
 		this.setItems()
 	}
 
-	protected async createLanguageSpecificFileFilter() {
-		return (link: vscode.Uri) => true
+	protected async createFileFilter() {
+		const jestInternalDirectory = /^__\w+__$/
+		return (filePath: string) => !filePath.split(fp.sep).some(name => name.startsWith('.') && !jestInternalDirectory.test(name))
 	}
 
 	static async fixESLint() {

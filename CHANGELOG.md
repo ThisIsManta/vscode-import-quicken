@@ -1,4 +1,5 @@
 ## 1.4.0
+- Fix did not filter out unwanted files.
 - Add Node.js APIs to the list from the global node_modules.
 - Add progress indicator while initializing.
 - Amend list ordering so that node modules are placed first.
