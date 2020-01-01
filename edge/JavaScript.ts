@@ -51,28 +51,12 @@ const getPackageJsonList = _.memoize(async () => {
 const defaultImportCache = new Map<FilePath, string>()
 const namespaceImportCache = new Map<FilePath, string>()
 const nodeModuleCache = new Map<PackageJsonPath, Array<NodeModuleItem>>()
-const fileExtensionExclusion = new Set<string>()
-const customImportSyntax = {
-	imports: 0,
-	requires: 0,
-}
-const customIndexFile = {
-	explicit: 0,
-	implicit: 0,
-}
-const customQuoteCharacters = {
-	single: 0,
-	double: 0,
-}
-const customStatementEnding = {
-	semi: 0,
-	none: 0,
-}
 
 export default class JavaScript implements Language {
 	private fileCache: Array<FileItem> = []
 	private fileIdentifierCache = new Map<FilePath, IdentifierMap>()
 	private nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
+	private importPattern = new ImportPattern()
 
 	protected config: JavaScriptConfiguration
 
@@ -94,13 +78,34 @@ export default class JavaScript implements Language {
 		}
 
 		if (SUPPORTED_EXTENSION.test(filePath) === false) {
-			this.fileCache.push(new FileItem(filePath))
+			this.fileCache.push(new FileItem(filePath, this.importPattern))
 			return
 		}
 
 		const codeTree = await JavaScript.parse(filePath)
 
-		await this.setImportPattern(codeTree)
+		await this.importPattern.scan(codeTree)
+
+		const existingImports = getExistingImports(codeTree)
+		for (const { node, path } of existingImports) {
+			if (ts.isImportDeclaration(node) && node.importClause) {
+				let moduleNameOrFullPath = path
+				if (path.startsWith('.')) {
+					const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
+					moduleNameOrFullPath = fullPath
+				}
+
+				if (node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) {
+					namespaceImportCache.set(moduleNameOrFullPath, node.importClause.namedBindings.name.text)
+					continue
+				}
+
+				if (node.importClause.name && ts.isIdentifier(node.importClause.name)) {
+					defaultImportCache.set(moduleNameOrFullPath, node.importClause.name.text)
+					continue
+				}
+			}
+		}
 
 		this.fileIdentifierCache.delete(filePath)
 
@@ -114,7 +119,7 @@ export default class JavaScript implements Language {
 			const nodeIdentifierItems = this.nodeIdentifierCache.get(packageJsonPath)
 			for (const { identifier, name } of getNamedImportedIdentifiersFromNodeModule(codeTree)) {
 				if (nodeIdentifierItems.some(item => item.identifier === identifier && item.name === name) === false) {
-					nodeIdentifierItems.push(new NodeIdentifierItem(name, identifier))
+					nodeIdentifierItems.push(new NodeIdentifierItem(name, identifier, this.importPattern))
 				}
 			}
 		}
@@ -124,77 +129,7 @@ export default class JavaScript implements Language {
 				continue
 			}
 
-			this.fileCache.push(new FileIdentifierItem(filePath, name, sourceText))
-		}
-	}
-
-	private async setImportPattern(codeTree: ts.SourceFile) {
-		if (!codeTree) {
-			return
-		}
-
-		const quotes = findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node)).map(node => node.getText().trim().charAt(0))
-		if (quotes.length > 0) {
-			const singleCount = quotes.filter(quote => quote === '\'').length
-			customQuoteCharacters.single += singleCount
-			customQuoteCharacters.double += quotes.length - singleCount
-		}
-
-		const statements = _.chain([codeTree, ...findNodesRecursively<ts.Block>(codeTree, node => ts.isBlock(node))])
-			.flatMap(block => Array.from(block.statements))
-			.uniq()
-			.value()
-		if (statements.length > 0) {
-			const semiCount = statements.filter(node => node.getText().trim().endsWith(';')).length
-			customStatementEnding.semi += semiCount
-			customStatementEnding.none += statements.length - semiCount
-		}
-
-		const existingImports = getExistingImports(codeTree)
-		for (const { node, path } of existingImports) {
-			if (ts.isImportDeclaration(node)) {
-				customImportSyntax.imports += 1
-
-			} else {
-				customImportSyntax.requires += 1
-			}
-
-			if (!ts.isImportDeclaration(node) || !node.importClause) {
-				continue
-			}
-
-			let moduleNameOrFullPath = path
-			if (path.startsWith('.')) {
-				const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
-
-				moduleNameOrFullPath = fullPath
-
-				if (SUPPORTED_EXTENSION.test(fullPath)) {
-					const fileExtensionWithLeadingDot = fp.extname(fullPath)
-
-					if (INDEX_FILE_PATTERN.test(fullPath)) {
-						if (INDEX_FILE_PATTERN.test(path)) {
-							customIndexFile.explicit += 1
-
-						} else {
-							customIndexFile.implicit += 1
-						}
-
-					} else if (path.endsWith(fileExtensionWithLeadingDot) === false) {
-						fileExtensionExclusion.add(fileExtensionWithLeadingDot.replace(/^\./, ''))
-					}
-				}
-			}
-
-			if (node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) {
-				namespaceImportCache.set(moduleNameOrFullPath, node.importClause.namedBindings.name.text)
-				continue
-			}
-
-			if (node.importClause.name && ts.isIdentifier(node.importClause.name)) {
-				defaultImportCache.set(moduleNameOrFullPath, node.importClause.name.text)
-				continue
-			}
+			this.fileCache.push(new FileIdentifierItem(filePath, name, sourceText, this.importPattern))
 		}
 	}
 
@@ -229,7 +164,7 @@ export default class JavaScript implements Language {
 					for (const modulePath of _.compact([...nodeModulePathList, globalModulePath])) {
 						const nodeJsAPIs = await getNodeJsAPIs(fp.join(modulePath, 'node_modules', '@types/node', 'index.d.ts'))
 						if (nodeJsAPIs.length > 0) {
-							nodeModuleItems.push(...nodeJsAPIs.map(name => new NodeModuleItem(name)))
+							nodeModuleItems.push(...nodeJsAPIs.map(name => new NodeModuleItem(name, this.importPattern)))
 							break
 						}
 					}
@@ -239,7 +174,7 @@ export default class JavaScript implements Language {
 							continue
 						}
 
-						nodeModuleItems.push(new NodeModuleItem(name))
+						nodeModuleItems.push(new NodeModuleItem(name, this.importPattern))
 					}
 
 					nodeModuleCache.set(packageJsonPath, _.sortBy(nodeModuleItems, item => item.name.toLowerCase()))
@@ -298,8 +233,6 @@ export default class JavaScript implements Language {
 		if (fp.basename(filePath) === 'package.json') {
 			await this.setItems()
 		}
-
-		await this.setImportPattern(await JavaScript.parse(filePath))
 	}
 
 	async cutItem(filePath: string) {
@@ -426,7 +359,7 @@ export default class JavaScript implements Language {
 				nonResolvableImports.push(item)
 
 			} else if (matchingFullPaths.length === 1) {
-				const path = await new FileItem(matchingFullPaths[0]).getRelativePath(document)
+				const path = await new FileItem(matchingFullPaths[0], this.importPattern).getRelativePath(document)
 				await editor.edit(worker => {
 					worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
 				})
@@ -452,7 +385,7 @@ export default class JavaScript implements Language {
 				return null
 			}
 
-			const path = await new FileItem(selectedItem.fullPath).getRelativePath(document)
+			const path = await new FileItem(selectedItem.fullPath, this.importPattern).getRelativePath(document)
 			await editor.edit(worker => {
 				worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
 			})
@@ -477,14 +410,7 @@ export default class JavaScript implements Language {
 		nodeModuleCache.clear()
 		namespaceImportCache.clear()
 		defaultImportCache.clear()
-		fileExtensionExclusion.clear()
 		getPackageJsonList.cache.clear()
-
-		for (const custom of [customImportSyntax, customIndexFile, customQuoteCharacters, customStatementEnding] as Array<{ [field: string]: number }>) {
-			for (const field in custom) {
-				custom[field] = 0
-			}
-		}
 	}
 
 	protected createFileFilter(document: vscode.TextDocument) {
@@ -636,7 +562,7 @@ export default class JavaScript implements Language {
 				continue
 			}
 
-			const statementEnding = customStatementEnding.semi >= customStatementEnding.none ? ';' : ''
+			const statementEnding = this.importPattern.statementEnding.semi >= this.importPattern.statementEnding.none ? ';' : ''
 
 			const lineEnding = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
 
@@ -654,8 +580,11 @@ class FileItem implements Item {
 	description: string;
 	readonly info: FileInfo
 
-	constructor(filePath: string) {
+	protected importPattern: ImportPattern
+
+	constructor(filePath: string, importPattern: ImportPattern) {
 		this.info = new FileInfo(filePath)
+		this.importPattern = importPattern
 
 		this.label = this.info.fileNameWithExtension
 
@@ -683,16 +612,15 @@ class FileItem implements Item {
 		// Save the current active cursor position as the asynchronous operations below might take too long to finish
 		const activeCursorPosition = editor.selection.active
 
-		const codeTree = await JavaScript.parse(document)
-		if (!codeTree) {
-			return null
-		}
-
 		const path = await this.getRelativePath(document)
 
 		if (/^(css|less|sass|scss|styl)$/.test(this.info.fileExtensionWithoutLeadingDot)) {
-			const existingImports = getExistingImports(codeTree)
+			const codeTree = await JavaScript.parse(document)
+			if (!codeTree) {
+				return null
+			}
 
+			const existingImports = getExistingImports(codeTree)
 			const duplicateImport = getDuplicateImport(existingImports, path)
 			if (duplicateImport) {
 				vscode.window.showErrorMessage(`The import of "${this.label}" already exists.`, { modal: true })
@@ -700,7 +628,7 @@ class FileItem implements Item {
 				return null
 			}
 
-			const snippet = await getImportOrRequireSnippet('infer', null, null, path, document)
+			const snippet = await getImportOrRequireSnippet('infer', null, null, path, document, this.importPattern)
 			await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
 			await JavaScript.fixESLint()
 			return null
@@ -708,13 +636,13 @@ class FileItem implements Item {
 
 		if (this.info.fileExtensionWithoutLeadingDot === 'json') {
 			const autoName = _.words(this.info.fileNameWithoutExtension.replace(/\..+/g, '')).join('')
-			const snippet = await getImportOrRequireSnippet('require', 'default', autoName, path, document)
+			const snippet = await getImportOrRequireSnippet('require', 'default', autoName, path, document, this.importPattern)
 			await editor.edit(worker => worker.insert(activeCursorPosition, snippet))
 			await JavaScript.fixESLint()
 			return null
 		}
 
-		const snippet = await getImportOrRequireSnippet('require', null, null, path, document)
+		const snippet = await getImportOrRequireSnippet('require', null, null, path, document, this.importPattern)
 		await editor.edit(worker => worker.insert(activeCursorPosition, snippet))
 		await JavaScript.fixESLint()
 	}
@@ -724,12 +652,12 @@ class FileItem implements Item {
 		const path = this.info.getRelativePath(directoryPath)
 
 		// Remove "/index.js" from the path
-		if (INDEX_FILE_PATTERN.test(this.info.fullPathForPOSIX) && customIndexFile.implicit > customIndexFile.explicit) {
+		if (INDEX_FILE_PATTERN.test(this.info.fullPathForPOSIX) && this.importPattern.indexFile.hidden > this.importPattern.indexFile.visible) {
 			return fp.dirname(path)
 		}
 
 		// Remove file extension from the path
-		if (fileExtensionExclusion.has(this.info.fileExtensionWithoutLeadingDot)) {
+		if (this.importPattern.fileExtensionExclusion.has(this.info.fileExtensionWithoutLeadingDot)) {
 			return path.replace(new RegExp(_.escapeRegExp(fp.extname(this.info.fileNameWithExtension)) + '$'), '')
 		}
 
@@ -745,8 +673,8 @@ class FileIdentifierItem extends FileItem {
 	readonly name: string
 	readonly defaultExported: boolean
 
-	constructor(filePath: string, name: string, text?: string) {
-		super(filePath)
+	constructor(filePath: string, name: string, text: string, importPattern: ImportPattern) {
+		super(filePath, importPattern)
 
 		this.name = name
 
@@ -770,7 +698,7 @@ class FileIdentifierItem extends FileItem {
 
 		// Try to import from the closest index file
 		if (indexFilePath && this.info.fullPath !== indexFilePath && indexFilePath.startsWith(workingDirectory + fp.sep) === false) {
-			const indexFile = new FileItem(indexFilePath)
+			const indexFile = new FileItem(indexFilePath, this.importPattern)
 			const existingImports = getExistingImports(codeTree)
 
 			const getDuplicateImportForIndexFile = async () => {
@@ -1025,7 +953,13 @@ class FileIdentifierItem extends FileItem {
 			}
 		}
 
-		const snippet = await getImportOrRequireSnippet('infer', kind, name, path, document)
+		let importPattern = this.importPattern
+		if (existingImports.length > 0) {
+			importPattern = new ImportPattern()
+			await importPattern.scan(codeTree)
+		}
+
+		const snippet = await getImportOrRequireSnippet('infer', kind, name, path, document, importPattern)
 		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
 		await JavaScript.fixESLint()
 	}
@@ -1036,9 +970,12 @@ class NodeModuleItem implements Item {
 	label: string
 	description: string
 
-	constructor(name: string) {
+	protected importPattern: ImportPattern
+
+	constructor(name: string, importPattern: ImportPattern) {
 		this.name = name
 		this.label = name
+		this.importPattern = importPattern
 	}
 
 	async addImport(editor: vscode.TextEditor, language: JavaScript) {
@@ -1174,7 +1111,13 @@ class NodeModuleItem implements Item {
 			}
 		}
 
-		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.name, document)
+		let importPattern = this.importPattern
+		if (existingImports.length > 0) {
+			importPattern = new ImportPattern()
+			await importPattern.scan(codeTree)
+		}
+
+		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.name, document, importPattern)
 		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, this.name, document), snippet))
 		await JavaScript.fixESLint()
 	}
@@ -1275,8 +1218,8 @@ class NodeIdentifierItem extends NodeModuleItem {
 	readonly identifier: string
 	readonly detail: string
 
-	constructor(name: string, identifier: string) {
-		super(name)
+	constructor(name: string, identifier: string, importPattern: ImportPattern) {
+		super(name, importPattern)
 
 		this.identifier = identifier
 		this.label = identifier
@@ -1285,6 +1228,95 @@ class NodeIdentifierItem extends NodeModuleItem {
 
 	async addImport(editor: vscode.TextEditor, language: JavaScript) {
 		return super.addImportInternal(editor, language, this.identifier)
+	}
+}
+
+class ImportPattern {
+	fileExtensionExclusion = new Set<string>()
+
+	syntax = {
+		imports: 0,
+		requires: 0,
+	}
+
+	indexFile = {
+		visible: 0,
+		hidden: 0,
+	}
+
+	quoteCharacters = {
+		single: 0,
+		double: 0,
+	}
+
+	statementEnding = {
+		semi: 0,
+		none: 0,
+	}
+
+	async scan(codeTree: ts.SourceFile) {
+		if (!codeTree) {
+			return
+		}
+
+		const existingImports = getExistingImports(codeTree)
+
+		let stringNodes: Array<ts.StringLiteral>
+		if (existingImports.length > 0) {
+			stringNodes = _.flatMap(existingImports, ({ node }) => findNodesRecursively<ts.StringLiteral>(node, node => ts.isStringLiteral(node)))
+
+		} else {
+			stringNodes = findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node))
+		}
+
+		const quoteCount = _.countBy(stringNodes, node => node.getText().trim().charAt(0) === '\'')
+		this.quoteCharacters.single += quoteCount['\'']
+		this.quoteCharacters.double += quoteCount['"']
+
+		let statementNodes: Array<ts.Statement>
+		if (existingImports.length > 0) {
+			statementNodes = existingImports.map(({ node }) => node)
+
+		} else {
+			statementNodes = _.chain([codeTree, ...findNodesRecursively<ts.Block>(codeTree, node => ts.isBlock(node))])
+				.flatMap(block => Array.from(block.statements))
+				.uniq()
+				.value()
+		}
+
+		const semiCount = statementNodes.filter(node => node.getText().trim().endsWith(';')).length
+		this.statementEnding.semi += semiCount
+		this.statementEnding.none += statementNodes.length - semiCount
+
+		for (const { node, path } of existingImports) {
+			if (ts.isImportDeclaration(node)) {
+				this.syntax.imports += 1
+
+			} else {
+				this.syntax.requires += 1
+			}
+
+			if (ts.isImportDeclaration(node) && node.importClause) {
+				if (path.startsWith('.')) {
+					const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
+					if (SUPPORTED_EXTENSION.test(fullPath)) {
+						const fileExtensionWithLeadingDot = fp.extname(fullPath)
+
+						if (INDEX_FILE_PATTERN.test(fullPath)) {
+							if (INDEX_FILE_PATTERN.test(path)) {
+								this.indexFile.visible += 1
+
+							} else {
+								this.indexFile.hidden += 1
+							}
+
+						} else if (path.endsWith(fileExtensionWithLeadingDot) === false) {
+							this.fileExtensionExclusion.add(fileExtensionWithLeadingDot.replace(/^\./, ''))
+						}
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -1378,10 +1410,10 @@ async function insertNamedImportToExistingImports(name: string, existingImports:
 
 type ImportKind = 'default' | 'namespace' | 'named' | null
 
-async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer', kind: ImportKind, name: string | null, path: string, document: vscode.TextDocument) {
-	const quote = customQuoteCharacters.single >= customQuoteCharacters.double ? '\'' : '"'
+async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer', kind: ImportKind, name: string | null, path: string, document: vscode.TextDocument, importPattern: ImportPattern) {
+	const quote = importPattern.quoteCharacters.single >= importPattern.quoteCharacters.double ? '\'' : '"'
 
-	const statementEnding = customStatementEnding.semi >= customStatementEnding.none ? ';' : ''
+	const statementEnding = importPattern.statementEnding.semi >= importPattern.statementEnding.none ? ';' : ''
 
 	const lineEnding = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
 
@@ -1389,7 +1421,7 @@ async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer',
 		syntax = 'import'
 	}
 
-	if (syntax === 'import' || syntax === 'infer' && customImportSyntax.imports > customImportSyntax.requires) {
+	if (syntax === 'import' || syntax === 'infer' && importPattern.syntax.imports > importPattern.syntax.requires) {
 		if (!kind || !name) {
 			return `import ${quote}${path}${quote}` + statementEnding + lineEnding
 
