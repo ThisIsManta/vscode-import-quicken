@@ -218,21 +218,20 @@ export default class JavaScript implements Language {
 						.uniq()
 						.value()
 
+					let globalModulePath = ''
 					try {
-						if (dependencyNameList.some(name => name === '@types/node')) {
-							const globalModulePath = cp.execSync('npm list -g', { encoding: 'utf-8' }).split('\n')[0].trim()
-
-							for (const modulePath of _.compact([...nodeModulePathList, globalModulePath])) {
-								const nodeJsAPIs = await getNodeJsAPIs(fp.join(modulePath, 'node_modules', '@types/node', 'index.d.ts'))
-								if (nodeJsAPIs.length > 0) {
-									nodeModuleItems.push(...nodeJsAPIs.map(name => new NodeModuleItem(name)))
-									break
-								}
-							}
-						}
+						globalModulePath = cp.execSync('npm list -g', { encoding: 'utf-8' }).split('\n')[0].trim()
 
 					} catch (error) {
 						console.error(error)
+					}
+
+					for (const modulePath of _.compact([...nodeModulePathList, globalModulePath])) {
+						const nodeJsAPIs = await getNodeJsAPIs(fp.join(modulePath, 'node_modules', '@types/node', 'index.d.ts'))
+						if (nodeJsAPIs.length > 0) {
+							nodeModuleItems.push(...nodeJsAPIs.map(name => new NodeModuleItem(name)))
+							break
+						}
 					}
 
 					for (const name of dependencyNameList) {
