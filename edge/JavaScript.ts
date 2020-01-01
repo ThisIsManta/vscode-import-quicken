@@ -27,7 +27,7 @@ const getPackageJsonList = _.memoize(async () => {
 
 	const packageJsonPathList = (await vscode.workspace.findFiles('**/package.json', '**/node_modules/**')).map(link => link.fsPath)
 
-	const packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }> = []
+	const packageJsonList: Array<{ packageJsonPath: PackageJsonPath, nodeModulePathList: Array<string> }> = []
 	for (const packageJsonPath of packageJsonPathList) {
 		const nodeModulePathList: Array<string> = []
 		for (const yarnLockPath of yarnLockPathList) {
@@ -478,6 +478,7 @@ export default class JavaScript implements Language {
 		namespaceImportCache.clear()
 		defaultImportCache.clear()
 		fileExtensionExclusion.clear()
+		getPackageJsonList.cache.clear()
 
 		for (const custom of [customImportSyntax, customIndexFile, customQuoteCharacters, customStatementEnding] as Array<{ [field: string]: number }>) {
 			for (const field in custom) {
