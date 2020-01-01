@@ -5,24 +5,15 @@ import * as fp from 'path'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
 
-import { ExtensionLevelConfigurations } from './global'
+import { ExtensionConfiguration } from './global'
 import JavaScript from './JavaScript'
 
 export default class TypeScript extends JavaScript {
 	private tsconfigCache = new Map<string, { compilerOptions: ts.CompilerOptions, include?: Array<string>, exclude?: Array<string> }>()
 	private tsconfigWatcher: vscode.FileSystemWatcher
 
-	constructor(extensionLevelConfig: ExtensionLevelConfigurations) {
-		super({
-			...extensionLevelConfig,
-			javascript: {
-				...extensionLevelConfig.javascript,
-				filter: {
-					...extensionLevelConfig.javascript.filter,
-					...extensionLevelConfig.typescript.filter,
-				},
-			},
-		})
+	setConfiguration(config: ExtensionConfiguration) {
+		super.setConfiguration(_.merge({}, config, { javascript: config.typescript }))
 	}
 
 	async setItems() {

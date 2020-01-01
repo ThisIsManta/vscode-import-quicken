@@ -7,9 +7,9 @@ import * as ts from 'typescript'
 import * as vscode from 'vscode'
 
 import FileInfo from './FileInfo'
-import { ExtensionLevelConfigurations, Language, Item, findFilesRoughly, hasFileExtensionOf, tryGetFullPath } from './global'
+import { ExtensionConfiguration, Language, Item, findFilesRoughly, hasFileExtensionOf, tryGetFullPath } from './global'
 
-export interface JavaScriptConfigurations {
+export interface JavaScriptConfiguration {
 	filter: Readonly<{ [key: string]: string }>
 }
 
@@ -74,10 +74,10 @@ export default class JavaScript implements Language {
 	private fileIdentifierCache = new Map<FilePath, IdentifierMap>()
 	private nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 
-	public configs: JavaScriptConfigurations
+	protected config: JavaScriptConfiguration
 
-	constructor(extensionLevelConfigs: ExtensionLevelConfigurations) {
-		this.configs = extensionLevelConfigs.javascript
+	setConfiguration(config: ExtensionConfiguration) {
+		this.config = config.javascript
 	}
 
 	getCompatibleFileExtensions() {
@@ -490,15 +490,17 @@ export default class JavaScript implements Language {
 	protected createFileFilter(document: vscode.TextDocument) {
 		const jestInternalDirectory = /^__\w+__$/
 
-		const workPath = _.trimStart(document.fileName.substring(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath.length), fp.sep)
-		const TM_FILENAME_BASE = _.escapeRegExp(fp.basename(document.fileName).replace(/\..+/, ''))
 		let targetMatcher: RegExp | null = null
-		for (const key in this.configs.filter) {
-			const sourceMatcher = new RegExp(key)
-			if (sourceMatcher.test(workPath)) {
-				// eslint-disable-next-line no-template-curly-in-string
-				targetMatcher = new RegExp(this.configs.filter[key].replace('${TM_FILENAME_BASE}', TM_FILENAME_BASE))
-				break
+		if (this.config) {
+			const workPath = _.trimStart(document.fileName.substring(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath.length), fp.sep)
+			const TM_FILENAME_BASE = _.escapeRegExp(fp.basename(document.fileName).replace(/\..+/, ''))
+			for (const key in this.config.filter) {
+				const sourceMatcher = new RegExp(key)
+				if (sourceMatcher.test(workPath)) {
+					// eslint-disable-next-line no-template-curly-in-string
+					targetMatcher = new RegExp(this.config.filter[key].replace('${TM_FILENAME_BASE}', TM_FILENAME_BASE))
+					break
+				}
 			}
 		}
 

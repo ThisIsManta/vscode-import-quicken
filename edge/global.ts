@@ -6,14 +6,14 @@ import * as vscode from 'vscode'
 import * as JavaScript from './JavaScript'
 import * as Stylus from './Stylus'
 
-export interface ExtensionLevelConfigurations {
+export interface ExtensionConfiguration {
 	history: number
-	javascript: JavaScript.JavaScriptConfigurations
-	typescript: JavaScript.JavaScriptConfigurations
-	stylus: Stylus.StylusConfigurations
+	javascript: JavaScript.JavaScriptConfiguration
+	typescript: JavaScript.JavaScriptConfiguration
 }
 
 export interface Language extends vscode.Disposable {
+	setConfiguration(config: ExtensionConfiguration): void
 	setItems(): Promise<void>
 	getItems(document: vscode.TextDocument): Promise<Array<Item> | null>
 	addItem(filePath: string): Promise<void>

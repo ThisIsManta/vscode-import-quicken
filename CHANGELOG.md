@@ -1,3 +1,6 @@
+## 1.4.1
+- Amend no re-initialization when extension configuration has been changed.
+
 ## 1.4.0
 - Fix did not filter out unwanted files.
 - Add Node.js APIs to the list from the global node_modules.

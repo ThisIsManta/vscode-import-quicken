@@ -2,15 +2,23 @@ import * as _ from 'lodash'
 import * as vscode from 'vscode'
 
 import FileChangeQueue from './FileChangeQueue'
-import { ExtensionLevelConfigurations, Language, Item } from './global'
+import { ExtensionConfiguration, Language, Item } from './global'
 import JavaScript from './JavaScript'
 import Stylus from './Stylus'
 import TypeScript from './TypeScript'
 
-const languages: Array<Language> = []
-
 // Do not `await` in this function body as all the commands must be registered as soon as possible to avoid a command-not-found error
 export function activate(context: vscode.ExtensionContext) {
+	let initializing = false
+
+	const languages: Array<Language> = [
+		// Add supported languages here
+		new TypeScript(),
+		new JavaScript(),
+		new Stylus(),
+	]
+	context.subscriptions.push(...languages)
+
 	const fileChanges = new FileChangeQueue(async ({ filePath, removed }) => {
 		await Promise.all(languages.map(async language => {
 			await language.cutItem(filePath)
@@ -22,29 +30,15 @@ export function activate(context: vscode.ExtensionContext) {
 	})
 	context.subscriptions.push(fileChanges)
 
-	let initializing = false
-
-	const initialize = async () => {
-		if (initializing) {
-			return
-		}
-
+	const initializationPromise = (async () => {
 		initializing = true
 
-		const extensionLevelConfig = vscode.workspace.getConfiguration().get<ExtensionLevelConfigurations>('importQuicken')
-
+		const config = vscode.workspace.getConfiguration().get<ExtensionConfiguration>('importQuicken')
 		for (const language of languages) {
-			language.dispose()
+			language.setConfiguration(config)
 		}
 
-		languages.splice(0, languages.length)
-
-		// Add supported languages here
-		languages.push(new TypeScript(extensionLevelConfig))
-		languages.push(new JavaScript(extensionLevelConfig))
-		languages.push(new Stylus(extensionLevelConfig))
-
-		return vscode.window.withProgress({
+		await vscode.window.withProgress({
 			title: 'Scanning Files (Import Quicken)',
 			location: vscode.ProgressLocation.Window,
 		}, async () => {
@@ -56,12 +50,13 @@ export function activate(context: vscode.ExtensionContext) {
 
 			fileChanges.processImmediately()
 		})
-	}
-
-	let initializationPromise = initialize()
+	})()
 
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(() => {
-		initializationPromise = initialize()
+		const config = vscode.workspace.getConfiguration().get<ExtensionConfiguration>('importQuicken')
+		for (const language of languages) {
+			language.setConfiguration(config)
+		}
 	}))
 
 	const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*')
@@ -219,10 +214,4 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 		}
 	}))
-}
-
-export function deactivate() {
-	for (const language of languages) {
-		language.dispose()
-	}
 }

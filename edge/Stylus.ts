@@ -5,9 +5,7 @@ import { Parser, nodes as Nodes } from 'stylus'
 import * as vscode from 'vscode'
 
 import FileInfo from './FileInfo'
-import { ExtensionLevelConfigurations, Language, Item, findFilesRoughly, tryGetFullPath } from './global'
-
-export interface StylusConfigurations { }
+import { ExtensionConfiguration, Language, Item, findFilesRoughly, tryGetFullPath } from './global'
 
 const SUPPORTED_LANGUAGE = /^stylus$/
 
@@ -20,19 +18,16 @@ let fileExtensionCount = 0
 let semiColonCount = 0
 
 export default class Stylus implements Language {
-	private configs: StylusConfigurations
 	private fileItemCache: Array<FileItem> = []
 
-	constructor(extensionLevelConfigs: ExtensionLevelConfigurations) {
-		this.configs = extensionLevelConfigs.stylus
-	}
+	setConfiguration(config: ExtensionConfiguration) { }
 
 	async setItems() {
 		const fileLinks = await vscode.workspace.findFiles('**/*.{styl,css,jpg,jpeg,png,gif,svg,otf,ttf,woff,woff2,eot}')
 
 		for (const fileLink of fileLinks) {
 			const rootPath = vscode.workspace.getWorkspaceFolder(fileLink).uri.fsPath
-			this.fileItemCache.push(new FileItem(new FileInfo(fileLink.fsPath), rootPath, this.configs))
+			this.fileItemCache.push(new FileItem(new FileInfo(fileLink.fsPath), rootPath))
 
 			if (fp.extname(fileLink.fsPath) !== '.styl') {
 				continue
@@ -106,7 +101,7 @@ export default class Stylus implements Language {
 		if (this.fileItemCache) {
 			const fileInfo = new FileInfo(filePath)
 			const rootPath = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath)).uri.fsPath
-			this.fileItemCache.push(new FileItem(fileInfo, rootPath, this.configs))
+			this.fileItemCache.push(new FileItem(fileInfo, rootPath))
 		}
 	}
 
@@ -179,12 +174,12 @@ export default class Stylus implements Language {
 
 			} else if (matchingFullPaths.length === 1) {
 				await editor.edit(worker => {
-					const item = new FileItem(new FileInfo(matchingFullPaths[0]), rootPath, this.configs)
+					const item = new FileItem(new FileInfo(matchingFullPaths[0]), rootPath)
 					worker.replace(getEditableRange(node), item.getRelativePath(documentFileInfo.directoryPath))
 				})
 
 			} else {
-				const candidateItems = matchingFullPaths.map(path => new FileItem(new FileInfo(path), rootPath, this.configs))
+				const candidateItems = matchingFullPaths.map(path => new FileItem(new FileInfo(path), rootPath))
 				const selectedItem = await vscode.window.showQuickPick(candidateItems, { placeHolder: node.val })
 
 				if (!selectedItem) {
@@ -227,13 +222,11 @@ export default class Stylus implements Language {
 }
 
 class FileItem implements Item {
-	private options: StylusConfigurations
 	readonly label: string;
 	readonly description: string;
 	readonly fileInfo: FileInfo
 
-	constructor(fileInfo: FileInfo, rootPath: string, options: StylusConfigurations) {
-		this.options = options
+	constructor(fileInfo: FileInfo, rootPath: string) {
 		this.fileInfo = fileInfo
 
 		this.description = _.trim(fp.dirname(this.fileInfo.fullPath.substring(rootPath.length)), fp.sep)
