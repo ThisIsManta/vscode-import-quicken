@@ -6,7 +6,7 @@ import * as fp from 'path'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
 
-import FileInfo from './FileInfo'
+import FileInfo, { getPosixPath } from './FileInfo'
 import { ExtensionConfiguration, Language, Item, findFilesRoughly, hasFileExtensionOf, tryGetFullPath } from './global'
 
 export interface JavaScriptConfiguration {
@@ -54,7 +54,6 @@ const nodeModuleCache = new Map<PackageJsonPath, Array<NodeModuleItem>>()
 
 export default class JavaScript implements Language {
 	private fileCache: Array<FileItem> = []
-	private fileIdentifierCache = new Map<FilePath, IdentifierMap>()
 	private nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 	private importPattern = new ImportPattern()
 
@@ -72,7 +71,7 @@ export default class JavaScript implements Language {
 		return true
 	}
 
-	private async setCache(filePath: string) {
+	private async setCache(filePath: string, fileIdentifierCache: Map<FilePath, IdentifierMap>) {
 		if (/(\\|\/)/.test(filePath) === false) {
 			return
 		}
@@ -83,31 +82,19 @@ export default class JavaScript implements Language {
 		}
 
 		const codeTree = await JavaScript.parse(filePath)
+		const existingImports = await getExistingImportsWithFullPath(codeTree)
+		const importedIdentifiers = getImportedIdentifiers(existingImports)
 
-		await this.importPattern.scan(codeTree)
+		this.importPattern.scan(existingImports)
 
-		const existingImports = getExistingImports(codeTree)
-		for (const { node, path } of existingImports) {
-			if (ts.isImportDeclaration(node) && node.importClause) {
-				let moduleNameOrFullPath = path
-				if (path.startsWith('.')) {
-					const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
-					moduleNameOrFullPath = fullPath
-				}
+		for (const { kind, identifier, path, fullPath } of importedIdentifiers) {
+			if (kind === 'default') {
+				defaultImportCache.set(fullPath || path, identifier)
 
-				if (node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) {
-					namespaceImportCache.set(moduleNameOrFullPath, node.importClause.namedBindings.name.text)
-					continue
-				}
-
-				if (node.importClause.name && ts.isIdentifier(node.importClause.name)) {
-					defaultImportCache.set(moduleNameOrFullPath, node.importClause.name.text)
-					continue
-				}
+			} else if (kind === 'namespace') {
+				namespaceImportCache.set(fullPath || path, identifier)
 			}
 		}
-
-		this.fileIdentifierCache.delete(filePath)
 
 		const packageJsonList = await getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(filePath, packageJsonList)?.packageJsonPath
@@ -117,14 +104,20 @@ export default class JavaScript implements Language {
 			}
 
 			const nodeIdentifierItems = this.nodeIdentifierCache.get(packageJsonPath)
-			for (const { identifier, name } of getNamedImportedIdentifiersFromNodeModule(codeTree)) {
-				if (nodeIdentifierItems.some(item => item.identifier === identifier && item.name === name) === false) {
-					nodeIdentifierItems.push(new NodeIdentifierItem(name, identifier, this.importPattern))
+			for (const { identifier, path } of importedIdentifiers) {
+				if (path.startsWith('.') || path.startsWith('!')) {
+					continue
 				}
+
+				if (nodeIdentifierItems.some(item => item.identifier === identifier && item.name === path)) {
+					continue
+				}
+
+				nodeIdentifierItems.push(new NodeIdentifierItem(path, identifier, this.importPattern))
 			}
 		}
 
-		for (const [name, { pathList, sourceText }] of await getExportedIdentifiers(codeTree, this.fileIdentifierCache)) {
+		for (const [name, { pathList, sourceText }] of await getExportedIdentifiers(codeTree, fileIdentifierCache)) {
 			if (_.uniq(pathList).length !== 1) {
 				continue
 			}
@@ -137,6 +130,19 @@ export default class JavaScript implements Language {
 	setItems() {
 		if (!this.workingThread) {
 			const λ = async () => {
+				// Do not await here for performance
+				const globalNodeJsAPIsPromise = new Promise<Array<string>>(resolve => {
+					cp.exec('npm prefix -g', { encoding: 'utf-8' }, (error, globalModulePath) => {
+						if (error) {
+							console.error(error)
+							resolve([])
+							return
+						}
+
+						resolve(getNodeJsAPIs(fp.join(globalModulePath.trim(), 'node_modules', '@types/node', 'index.d.ts')))
+					})
+				})
+
 				const packageJsonList = await getPackageJsonList()
 				for (const { packageJsonPath, nodeModulePathList } of packageJsonList) {
 					if (nodeModuleCache.has(packageJsonPath)) {
@@ -153,20 +159,17 @@ export default class JavaScript implements Language {
 						.uniq()
 						.value()
 
-					let globalModulePath = ''
-					try {
-						globalModulePath = cp.execSync('npm list -g', { encoding: 'utf-8' }).split('\n')[0].trim()
-
-					} catch (error) {
-						console.error(error)
-					}
-
-					for (const modulePath of _.compact([...nodeModulePathList, globalModulePath])) {
-						const nodeJsAPIs = await getNodeJsAPIs(fp.join(modulePath, 'node_modules', '@types/node', 'index.d.ts'))
-						if (nodeJsAPIs.length > 0) {
-							nodeModuleItems.push(...nodeJsAPIs.map(name => new NodeModuleItem(name, this.importPattern)))
-							break
+					if (dependencyNameList.some(name => name === '@types/node')) {
+						for (const modulePath of nodeModulePathList) {
+							const localNodeJsAPIs = await getNodeJsAPIs(fp.join(modulePath, 'node_modules', '@types/node', 'index.d.ts'))
+							if (localNodeJsAPIs.length > 0) {
+								nodeModuleItems.push(...localNodeJsAPIs.map(name => new NodeModuleItem(name, this.importPattern)))
+								break
+							}
 						}
+
+					} else {
+						nodeModuleItems.push(...(await globalNodeJsAPIsPromise).map(name => new NodeModuleItem(name, this.importPattern)))
 					}
 
 					for (const name of dependencyNameList) {
@@ -181,9 +184,23 @@ export default class JavaScript implements Language {
 				}
 
 				if (this.fileCache.length === 0) {
-					const fileLinks = await vscode.workspace.findFiles('**/*')
-					for (const link of fileLinks) {
-						await this.setCache(link.fsPath)
+					const sourceFileLinks = await vscode.workspace.findFiles('**/*')
+
+					const priorityPathList = _.chain([vscode.window.activeTextEditor, ...vscode.window.visibleTextEditors])
+						.compact()
+						.map(editor => _.trimEnd(fp.dirname(editor.document.fileName), fp.sep) + fp.sep)
+						.uniq()
+						.sortBy(path => -path.split(fp.sep).length)
+						.value()
+
+					const sortedFileLinks = _.sortBy(sourceFileLinks, link => {
+						const rank = _.findIndex(priorityPathList, path => link.fsPath.startsWith(path))
+						return rank === -1 ? Infinity : rank
+					})
+					const fileIdentifierCache = new Map<FilePath, IdentifierMap>()
+
+					for (const link of sortedFileLinks) {
+						await this.setCache(link.fsPath, fileIdentifierCache)
 					}
 				}
 
@@ -213,7 +230,7 @@ export default class JavaScript implements Language {
 		}
 
 		const filter = this.createFileFilter(document)
-		const fileItems = this.fileCache.filter(file => filter(file.info.fullPath))
+		const fileItems = this.fileCache.filter(file => filter(file.info))
 
 		const packageJsonList = await getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
@@ -228,7 +245,7 @@ export default class JavaScript implements Language {
 	}
 
 	async addItem(filePath: string) {
-		await this.setCache(filePath)
+		await this.setCache(filePath, new Map<FilePath, IdentifierMap>())
 
 		if (fp.basename(filePath) === 'package.json') {
 			await this.setItems()
@@ -236,8 +253,6 @@ export default class JavaScript implements Language {
 	}
 
 	async cutItem(filePath: string) {
-		this.fileIdentifierCache.delete(filePath)
-
 		this.fileCache = this.fileCache.filter(file => file.info.fullPath !== filePath)
 
 		if (fp.basename(filePath) === 'package.json') {
@@ -416,26 +431,25 @@ export default class JavaScript implements Language {
 	protected createFileFilter(document: vscode.TextDocument) {
 		const jestInternalDirectory = /^__\w+__$/
 
-		let targetMatcher: RegExp | null = null
-		if (this.config) {
-			const workPath = _.trimStart(document.fileName.substring(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath.length), fp.sep)
-			const TM_FILENAME_BASE = _.escapeRegExp(fp.basename(document.fileName).replace(/\..+/, ''))
-			for (const key in this.config.filter) {
-				const sourceMatcher = new RegExp(key)
-				if (sourceMatcher.test(workPath)) {
-					// eslint-disable-next-line no-template-curly-in-string
-					targetMatcher = new RegExp(this.config.filter[key].replace('${TM_FILENAME_BASE}', TM_FILENAME_BASE))
-					break
-				}
-			}
-		}
+		const rootPath = getPosixPath(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath)
+		const filePath = getPosixPath(_.trimStart(document.fileName.substring(rootPath.length), fp.posix.sep))
+		const fileName = _.escapeRegExp(fp.basename(document.fileName).replace(/\..+/, ''))
+		const targetMatcher = _.chain(this.config.filter || {})
+			.toPairs()
+			.filter(([source]) => new RegExp(source).test(filePath))
+			.map(([, target]) => {
+				// eslint-disable-next-line no-template-curly-in-string
+				return new RegExp(target.replace('${TM_FILENAME_BASE}', fileName))
+			})
+			.first()
+			.value() || undefined
 
-		return (filePath: string) => {
-			if (filePath.split(fp.sep).some(path => path.startsWith('.') || jestInternalDirectory.test(path))) {
+		return (fileInfo: FileInfo) => {
+			if (fileInfo.fullPathForPOSIX.split(fp.posix.sep).some(path => path.startsWith('.') || jestInternalDirectory.test(path))) {
 				return false
 			}
 
-			if (targetMatcher && !targetMatcher.test(filePath)) {
+			if (targetMatcher && fileInfo.fullPathForPOSIX.startsWith(rootPath + fp.posix.sep) && targetMatcher.test(fileInfo.fullPathForPOSIX.substring(rootPath.length + 1)) === false) {
 				return false
 			}
 
@@ -805,9 +819,10 @@ class FileIdentifierItem extends FileItem {
 			return null
 		}
 
-		const existingImports = getExistingImports(codeTree)
-
-		const { name, kind, path } = await this.getImportPattern(codeTree, document)
+		const [existingImports, { name, kind, path }] = await Promise.all([
+			getExistingImportsWithFullPath(codeTree),
+			this.getImportPattern(codeTree, document),
+		])
 
 		const duplicateImport = getDuplicateImport(existingImports, path)
 		if (duplicateImport) {
@@ -956,7 +971,7 @@ class FileIdentifierItem extends FileItem {
 		let importPattern = this.importPattern
 		if (existingImports.length > 0) {
 			importPattern = new ImportPattern()
-			await importPattern.scan(codeTree)
+			importPattern.scan(existingImports)
 		}
 
 		const snippet = await getImportOrRequireSnippet('infer', kind, name, path, document, importPattern)
@@ -999,7 +1014,7 @@ class NodeModuleItem implements Item {
 
 		const autoName = _.words(_.last(this.name.split('/'))).map(_.upperFirst).join('')
 
-		const existingImports = getExistingImports(codeTree)
+		const existingImports = await getExistingImportsWithFullPath(codeTree)
 		const duplicateImport = existingImports.find(item => item.path === this.name)
 		if (duplicateImport) {
 			if (
@@ -1114,7 +1129,7 @@ class NodeModuleItem implements Item {
 		let importPattern = this.importPattern
 		if (existingImports.length > 0) {
 			importPattern = new ImportPattern()
-			await importPattern.scan(codeTree)
+			importPattern.scan(existingImports)
 		}
 
 		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.name, document, importPattern)
@@ -1137,7 +1152,7 @@ class NodeModuleItem implements Item {
 					try {
 						const { typings } = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
 						if (_.isString(typings)) {
-							const typeDefinitionPath = fp.resolve(fp.dirname(packageJsonPath), typings)
+							const typeDefinitionPath = fp.resolve(fp.dirname(packageJsonPath), typings.replace(/\//g, fp.sep))
 							if (await fs.exists(typeDefinitionPath)) {
 								return typeDefinitionPath
 							}
@@ -1254,41 +1269,13 @@ class ImportPattern {
 		none: 0,
 	}
 
-	async scan(codeTree: ts.SourceFile) {
-		if (!codeTree) {
-			return
-		}
+	scan(imports: Array<ImportStatementForScanning>) {
+		const stringNodes = _.flatMap(imports, ({ node }) => findNodesRecursively<ts.StringLiteral>(node, node => ts.isStringLiteral(node)))
+		const quoteCount = _.countBy(stringNodes, node => node.getText().trim().charAt(0))
+		this.quoteCharacters.single += quoteCount['\''] ?? 0
+		this.quoteCharacters.double += quoteCount['"'] ?? 0
 
-		const existingImports = getExistingImports(codeTree)
-
-		let stringNodes: Array<ts.StringLiteral>
-		if (existingImports.length > 0) {
-			stringNodes = _.flatMap(existingImports, ({ node }) => findNodesRecursively<ts.StringLiteral>(node, node => ts.isStringLiteral(node)))
-
-		} else {
-			stringNodes = findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node))
-		}
-
-		const quoteCount = _.countBy(stringNodes, node => node.getText().trim().charAt(0) === '\'')
-		this.quoteCharacters.single += quoteCount['\'']
-		this.quoteCharacters.double += quoteCount['"']
-
-		let statementNodes: Array<ts.Statement>
-		if (existingImports.length > 0) {
-			statementNodes = existingImports.map(({ node }) => node)
-
-		} else {
-			statementNodes = _.chain([codeTree, ...findNodesRecursively<ts.Block>(codeTree, node => ts.isBlock(node))])
-				.flatMap(block => Array.from(block.statements))
-				.uniq()
-				.value()
-		}
-
-		const semiCount = statementNodes.filter(node => node.getText().trim().endsWith(';')).length
-		this.statementEnding.semi += semiCount
-		this.statementEnding.none += statementNodes.length - semiCount
-
-		for (const { node, path } of existingImports) {
+		for (const { node, path, fullPath } of imports) {
 			if (ts.isImportDeclaration(node)) {
 				this.syntax.imports += 1
 
@@ -1296,24 +1283,25 @@ class ImportPattern {
 				this.syntax.requires += 1
 			}
 
-			if (ts.isImportDeclaration(node) && node.importClause) {
-				if (path.startsWith('.')) {
-					const fullPath = await tryGetFullPath([fp.dirname(codeTree.fileName), path], fp.extname(codeTree.fileName).replace(/^\./, ''))
-					if (SUPPORTED_EXTENSION.test(fullPath)) {
-						const fileExtensionWithLeadingDot = fp.extname(fullPath)
+			if (node.getText().trim().endsWith(';')) {
+				this.statementEnding.semi += 1
 
-						if (INDEX_FILE_PATTERN.test(fullPath)) {
-							if (INDEX_FILE_PATTERN.test(path)) {
-								this.indexFile.visible += 1
+			} else {
+				this.statementEnding.none += 1
+			}
 
-							} else {
-								this.indexFile.hidden += 1
-							}
+			if (fullPath && SUPPORTED_EXTENSION.test(fullPath)) {
+				const fileExtensionWithLeadingDot = fp.extname(fullPath)
+				if (INDEX_FILE_PATTERN.test(fullPath)) {
+					if (INDEX_FILE_PATTERN.test(path)) {
+						this.indexFile.visible += 1
 
-						} else if (path.endsWith(fileExtensionWithLeadingDot) === false) {
-							this.fileExtensionExclusion.add(fileExtensionWithLeadingDot.replace(/^\./, ''))
-						}
+					} else {
+						this.indexFile.hidden += 1
 					}
+
+				} else if (path.endsWith(fileExtensionWithLeadingDot) === false) {
+					this.fileExtensionExclusion.add(fileExtensionWithLeadingDot.replace(/^\./, ''))
 				}
 			}
 		}
@@ -1336,6 +1324,10 @@ interface ImportStatementForReadOnly {
 
 function getExistingImports(codeTree: ts.SourceFile) {
 	const imports: Array<ImportStatementForReadOnly> = []
+
+	if (!codeTree) {
+		return imports
+	}
 
 	codeTree.forEachChild(node => {
 		if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
@@ -1369,6 +1361,19 @@ function getExistingImports(codeTree: ts.SourceFile) {
 	})
 
 	return imports
+}
+
+interface ImportStatementForScanning extends ImportStatementForReadOnly {
+	fullPath: string | undefined // Do not write optional (?) as this cannot be compatible with ImportStatementForReadOnly
+}
+
+async function getExistingImportsWithFullPath(codeTree: ts.SourceFile): Promise<Array<ImportStatementForScanning>> {
+	const imports = getExistingImports(codeTree)
+
+	return Promise.all(imports.map(async stub => ({
+		...stub,
+		fullPath: stub.path.startsWith('.') ? await tryGetFullPath([fp.dirname(codeTree.fileName), stub.path], fp.extname(codeTree.fileName).replace(/^\./, '')) : undefined,
+	})))
 }
 
 async function insertNamedImportToExistingImports(name: string, existingImports: ts.NodeArray<ts.ImportSpecifier>, editor: vscode.TextEditor) {
@@ -1417,11 +1422,12 @@ async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer',
 
 	const lineEnding = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
 
-	if (/^typescript(react)?$/.test(document.languageId)) {
-		syntax = 'import'
-	}
-
-	if (syntax === 'import' || syntax === 'infer' && importPattern.syntax.imports > importPattern.syntax.requires) {
+	if (
+		syntax === 'import' || syntax === 'infer' && (
+			importPattern.syntax.imports > importPattern.syntax.requires ||
+			importPattern.syntax.requires === 0 && /^typescript(react)?$/.test(document.languageId)
+		)
+	) {
 		if (!kind || !name) {
 			return `import ${quote}${path}${quote}` + statementEnding + lineEnding
 
@@ -1786,42 +1792,63 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 	return exportedNames
 }
 
-function getNamedImportedIdentifiersFromNodeModule(codeTree: ts.SourceFile) {
-	return _.chain(getExistingImports(codeTree))
-		.reject(({ path }) => path.startsWith('.') || path.startsWith('!'))
-		.flatMap(({ node, path }) => {
-			if (ts.isImportDeclaration(node) && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings)) {
-				return node.importClause.namedBindings.elements.map(stub => {
-					return {
-						identifier: stub.name.text,
-						name: path,
-					}
+function getImportedIdentifiers<T extends ImportStatementForReadOnly>(imports: Array<T>) {
+	const output: Array<Omit<T, 'node'> & { identifier: string, kind: 'named' | 'namespace' | 'default' }> = []
+
+	for (const { node, ...rest } of imports) {
+		if (ts.isImportDeclaration(node) && node.importClause) {
+			if (node.importClause.name) {
+				output.push({
+					...rest,
+					identifier: node.importClause.name.text,
+					kind: 'default',
 				})
 			}
 
-			if (ts.isVariableStatement(node)) {
-				return _.flatMap(node.declarationList.declarations, stub => {
-					if (ts.isObjectBindingPattern(stub)) {
-						return stub.elements.map(item => {
-							if (ts.isIdentifier(item.propertyName)) {
-								return {
-									identifier: item.propertyName.text,
-									name: path,
-								}
+			if (node.importClause.namedBindings) {
+				if (ts.isNamespaceImport(node.importClause.namedBindings)) {
+					output.push({
+						...rest,
+						identifier: node.importClause.namedBindings.name.text,
+						kind: 'namespace',
+					})
 
-							} else if (ts.isIdentifier(item.name)) {
-								return {
-									identifier: item.name.text,
-									name: path,
-								}
-							}
+				} else if (ts.isNamedImports(node.importClause.namedBindings)) {
+					for (const stub of node.importClause.namedBindings.elements) {
+						output.push({
+							...rest,
+							identifier: stub.propertyName?.text ?? stub.name.text,
+							kind: 'named',
 						})
 					}
-				})
+				}
 			}
-		})
-		.compact()
-		.value()
+
+		} else if (ts.isVariableStatement(node)) {
+			node.declarationList.declarations.forEach(stub => {
+				if (ts.isIdentifier(stub.name)) {
+					output.push({
+						...rest,
+						identifier: stub.name.text,
+						kind: 'default',
+					})
+
+				} else if (ts.isObjectBindingPattern(stub.name)) {
+					stub.name.elements.forEach(elem => {
+						if (ts.isIdentifier(elem.name)) {
+							output.push({
+								...rest,
+								identifier: elem.propertyName && ts.isIdentifier(elem.propertyName) ? elem.propertyName.text : elem.name.text,
+								kind: 'named',
+							})
+						}
+					})
+				}
+			})
+		}
+	}
+
+	return output
 }
 
 function getDuplicateImport(existingImports: Array<ImportStatementForReadOnly>, path: string) {

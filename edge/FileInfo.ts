@@ -5,10 +5,6 @@ const PATH_SEPARATOR_FOR_WINDOWS = /\\/g
 
 const DRIVE_LETTER_FOR_WINDOWS = /^(\w+):(\\|\/)/
 
-const CURRENT_DIRECTORY_SEMANTIC = /^\.\//
-
-const UPPER_DIRECTORY_SEMANTIC = /\.\.\//g
-
 export default class FileInfo {
 	readonly fullPath: string
 	readonly fullPathForPOSIX: string
@@ -26,21 +22,27 @@ export default class FileInfo {
 		}
 
 		this.fullPath = fullPath
-		this.fullPathForPOSIX = this.fullPath.replace(DRIVE_LETTER_FOR_WINDOWS, '/$1/').replace(PATH_SEPARATOR_FOR_WINDOWS, '/')
+		this.fullPathForPOSIX = getPosixPath(this.fullPath)
 		this.fileExtensionWithoutLeadingDot = fp.extname(this.fullPath).replace(/^\./, '')
 		this.fileNameWithExtension = fp.basename(this.fullPath)
 		this.fileNameWithoutExtension = this.fileNameWithExtension.replace(new RegExp('\\.' + this.fileExtensionWithoutLeadingDot + '$', 'i'), '')
 		this.directoryName = _.last(fp.dirname(this.fullPath).split(fp.sep))
 		this.directoryPath = fp.dirname(this.fullPath)
-		this.directoryPathForPOSIX = fp.dirname(this.fullPath).replace(DRIVE_LETTER_FOR_WINDOWS, '/$1/').replace(PATH_SEPARATOR_FOR_WINDOWS, '/')
+		this.directoryPathForPOSIX = getPosixPath(fp.dirname(this.fullPath))
 	}
 
 	getRelativePath(directoryPath: string) {
-		let relativePath = fp.relative(directoryPath, this.fullPath).replace(PATH_SEPARATOR_FOR_WINDOWS, '/')
+		let relativePath = getPosixPath(fp.relative(directoryPath, this.fullPath))
 		if (relativePath.startsWith('../') === false) {
 			relativePath = './' + relativePath
 		}
 
 		return relativePath
 	}
+}
+
+export function getPosixPath(path: string) {
+	return (path || '')
+		.replace(DRIVE_LETTER_FOR_WINDOWS, '/$1/')
+		.replace(PATH_SEPARATOR_FOR_WINDOWS, '/')
 }

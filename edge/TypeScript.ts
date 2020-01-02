@@ -5,6 +5,7 @@ import * as fp from 'path'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
 
+import FileInfo, { getPosixPath } from './FileInfo'
 import { ExtensionConfiguration } from './global'
 import JavaScript from './JavaScript'
 
@@ -74,27 +75,28 @@ export default class TypeScript extends JavaScript {
 		const tsconfig = this.getTypeScriptConfigurations(document)
 
 		const jsAllowed = tsconfig?.compilerOptions.allowJs
-		const jsExtension = /\.jsx?$/i
+		const jsExtension = /jsx?$/i
 
+		// Presume the input pattern is written in POSIX style
 		const inclusionList = tsconfig?.include?.map(pattern =>
-			new Minimatch(fp.resolve(fp.dirname(tsconfig.filePath), pattern.replace(/\//g, fp.sep))))
+			new Minimatch(fp.posix.resolve(getPosixPath(fp.dirname(tsconfig.filePath)), pattern)))
 		const exclusionList = tsconfig?.exclude?.map(pattern =>
-			new Minimatch(fp.resolve(fp.dirname(tsconfig.filePath), pattern.replace(/\//g, fp.sep))))
+			new Minimatch(fp.posix.resolve(getPosixPath(fp.dirname(tsconfig.filePath)), pattern)))
 
-		return (filePath: string) => {
-			if (!baseFilter(filePath)) {
+		return (fileInfo: FileInfo) => {
+			if (!baseFilter(fileInfo)) {
 				return false
 			}
 
-			if (!jsAllowed && jsExtension.test(filePath)) {
+			if (!jsAllowed && jsExtension.test(fileInfo.fileExtensionWithoutLeadingDot)) {
 				return false
 			}
 
-			if (inclusionList && !inclusionList.some(pattern => pattern.match(filePath.replace(/\\/g, fp.posix.sep)))) {
+			if (inclusionList && inclusionList.every(pattern => !pattern.match(fileInfo.fullPathForPOSIX))) {
 				return false
 			}
 
-			if (exclusionList && exclusionList.some(pattern => pattern.match(filePath.replace(/\\/g, fp.posix.sep)))) {
+			if (exclusionList && exclusionList.some(pattern => pattern.match(fileInfo.fullPathForPOSIX))) {
 				return false
 			}
 

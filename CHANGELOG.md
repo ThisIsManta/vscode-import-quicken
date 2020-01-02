@@ -1,6 +1,7 @@
 ## 1.4.1
 - Amend no re-initialization when extension configuration has been changed.
 - Amend import pattern recognition for the current active document.
+- Improve performance up to 60% faster during initialization process.
 
 ## 1.4.0
 - Fix did not filter out unwanted files.
