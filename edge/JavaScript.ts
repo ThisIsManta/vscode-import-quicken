@@ -15,6 +15,8 @@ export interface JavaScriptConfiguration {
 
 const SUPPORTED_EXTENSION = /\.(j|t)sx?$/i
 const INDEX_FILE_PATTERN = /(\\|\/)index(\.(j|t)sx?)?$/
+const DOT_DIRECTORY = new RegExp('\\' + fp.sep + '\\.')
+const JEST_DIRECTORY = new RegExp('\\' + fp.sep + '__\\w+__\\' + fp.sep)
 
 // Copy from https://mathiasbynens.be/demo/javascript-identifier-regex
 // eslint-disable-next-line no-misleading-character-class
@@ -72,7 +74,19 @@ export default class JavaScript implements Language {
 	}
 
 	private async setFileCache(filePath: string, fileIdentifierCache: Map<FilePath, IdentifierMap>) {
-		if (/(\\|\/)/.test(filePath) === false) {
+		if (filePath.includes(fp.sep) === false) {
+			return
+		}
+
+		if (DOT_DIRECTORY.test(filePath)) {
+			return
+		}
+
+		if (JEST_DIRECTORY.test(filePath)) {
+			return
+		}
+
+		if (fp.extname(filePath) === '.git') {
 			return
 		}
 
@@ -427,8 +441,6 @@ export default class JavaScript implements Language {
 	}
 
 	protected createFileFilter(document: vscode.TextDocument) {
-		const jestInternalDirectory = /^__\w+__$/
-
 		const rootPath = getPosixPath(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath)
 		const filePath = getPosixPath(_.trimStart(document.fileName.substring(rootPath.length), fp.posix.sep))
 		const fileName = _.escapeRegExp(fp.basename(document.fileName).replace(/\..+/, ''))
@@ -443,12 +455,8 @@ export default class JavaScript implements Language {
 			.value() || undefined
 
 		return (fileInfo: FileInfo) => {
-			if (fileInfo.fullPathForPOSIX.split(fp.posix.sep).some(path => path.startsWith('.') || jestInternalDirectory.test(path))) {
-				return false
-			}
-
-			if (targetMatcher && fileInfo.fullPathForPOSIX.startsWith(rootPath + fp.posix.sep) && targetMatcher.test(fileInfo.fullPathForPOSIX.substring(rootPath.length + 1)) === false) {
-				return false
+			if (targetMatcher && fileInfo.fullPathForPOSIX.startsWith(rootPath + fp.posix.sep)) {
+				return targetMatcher.test(fileInfo.fullPathForPOSIX.substring(rootPath.length + 1))
 			}
 
 			return true
