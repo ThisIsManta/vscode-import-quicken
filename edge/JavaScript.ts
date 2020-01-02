@@ -71,7 +71,7 @@ export default class JavaScript implements Language {
 		return true
 	}
 
-	private async setCache(filePath: string, fileIdentifierCache: Map<FilePath, IdentifierMap>) {
+	private async setFileCache(filePath: string, fileIdentifierCache: Map<FilePath, IdentifierMap>) {
 		if (/(\\|\/)/.test(filePath) === false) {
 			return
 		}
@@ -118,16 +118,14 @@ export default class JavaScript implements Language {
 		}
 
 		for (const [name, { pathList, sourceText }] of await getExportedIdentifiers(codeTree, fileIdentifierCache)) {
-			if (_.uniq(pathList).length !== 1) {
-				continue
+			if (_.uniq(pathList).length === 1) {
+				this.fileCache.push(new FileIdentifierItem(filePath, name, sourceText, this.importPattern))
 			}
-
-			this.fileCache.push(new FileIdentifierItem(filePath, name, sourceText, this.importPattern))
 		}
 	}
 
 	private workingThread: Promise<void>
-	setItems() {
+	async setItems() {
 		if (!this.workingThread) {
 			const λ = async () => {
 				// Do not await here for performance
@@ -200,7 +198,7 @@ export default class JavaScript implements Language {
 					const fileIdentifierCache = new Map<FilePath, IdentifierMap>()
 
 					for (const link of sortedFileLinks) {
-						await this.setCache(link.fsPath, fileIdentifierCache)
+						await this.setFileCache(link.fsPath, fileIdentifierCache)
 					}
 				}
 
@@ -221,7 +219,7 @@ export default class JavaScript implements Language {
 			this.workingThread = λ()
 		}
 
-		return this.workingThread
+		await this.workingThread
 	}
 
 	async getItems(document: vscode.TextDocument) {
@@ -245,7 +243,7 @@ export default class JavaScript implements Language {
 	}
 
 	async addItem(filePath: string) {
-		await this.setCache(filePath, new Map<FilePath, IdentifierMap>())
+		await this.setFileCache(filePath, new Map<FilePath, IdentifierMap>())
 
 		if (fp.basename(filePath) === 'package.json') {
 			await this.setItems()
@@ -604,8 +602,7 @@ class FileItem implements Item {
 
 		const workspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))
 		if (workspace) {
-			const workspaceDirectory = workspace.uri.fsPath
-			this.description = _.trim(this.info.directoryPath.substring(workspaceDirectory.length), fp.sep)
+			this.description = _.trim(this.info.directoryPath.substring(workspace.uri.fsPath.length), fp.sep)
 
 		} else {
 			this.description = this.info.directoryPath
@@ -687,7 +684,7 @@ class FileIdentifierItem extends FileItem {
 	readonly name: string
 	readonly defaultExported: boolean
 
-	constructor(filePath: string, name: string, text: string, importPattern: ImportPattern) {
+	constructor(filePath: string, name: string, sourceText: string, importPattern: ImportPattern) {
 		super(filePath, importPattern)
 
 		this.name = name
@@ -696,9 +693,17 @@ class FileIdentifierItem extends FileItem {
 
 		if (!this.defaultExported) {
 			this.label = name
+
+			const workspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))
+			if (workspace) {
+				this.description = _.trim(this.info.fullPath.substring(workspace.uri.fsPath.length), fp.sep)
+
+			} else {
+				this.description = this.info.fullPath
+			}
 		}
 
-		this.detail = _.truncate(text, {
+		this.detail = _.truncate(sourceText, {
 			length: 120,
 			omission: '...',
 		})

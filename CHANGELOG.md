@@ -1,4 +1,5 @@
 ## 1.4.1
+- Add file name for exported identifiers.
 - Amend no re-initialization when extension configuration has been changed.
 - Amend import pattern recognition for the current active document.
 - Improve performance up to 60% faster during initialization process.
