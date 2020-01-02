@@ -42,8 +42,8 @@ export function activate(context: vscode.ExtensionContext) {
 			title: 'Scanning Files (Import Quicken)',
 			location: vscode.ProgressLocation.Window,
 		}, async () => {
-			await Promise.all(languages.map(language => {
-				return language.setItems()
+			await Promise.all(languages.map(async language => {
+				await language.setItems()
 			}))
 
 			initializing = false

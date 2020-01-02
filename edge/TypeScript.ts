@@ -42,7 +42,7 @@ export default class TypeScript extends JavaScript {
 			this.tsconfigCache.delete(link.fsPath)
 		})
 
-		super.setItems()
+		await super.setItems()
 	}
 
 	dispose() {
