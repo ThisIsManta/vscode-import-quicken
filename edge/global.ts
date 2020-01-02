@@ -4,7 +4,6 @@ import * as fp from 'path'
 import * as vscode from 'vscode'
 
 import * as JavaScript from './JavaScript'
-import * as Stylus from './Stylus'
 
 export interface ExtensionConfiguration {
 	history: number
@@ -65,27 +64,45 @@ export function hasFileExtensionOf(document: vscode.TextDocument, extensions: Ar
 	return extensions.indexOf(_.trimStart(fp.extname(document.fileName), '.').toLowerCase()) >= 0
 }
 
-export async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, defaultExtension = ['tsx', 'ts', 'jsx', 'js']): Promise<string> {
+export async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, defaultExtensions = ['tsx', 'ts', 'jsx', 'js'], fullPathCache?: { [fullPath: string]: boolean }): Promise<string> {
 	const fullPath = fp.resolve(...pathList)
+	const possibleExtensions = _.uniq([preferredExtension.toLowerCase(), ...defaultExtensions])
 
-	if (await fs.exists(fullPath)) {
-		const fileStat = await fs.lstat(fullPath)
-		if (fileStat.isFile()) {
+	if (fullPathCache) {
+		if (fp.extname(fullPath) && fullPathCache[fullPath]) {
 			return fullPath
+		}
 
-		} else if (fileStat.isDirectory()) {
-			const indexPath = await tryGetFullPath([...pathList, 'index'], preferredExtension)
-			if (indexPath !== undefined) {
-				return indexPath
+		for (const extension of possibleExtensions) {
+			const fullPathWithExtension = fullPath + '.' + extension
+			if (fullPathCache[fullPathWithExtension]) {
+				return fullPathWithExtension
+			}
+		}
+
+		for (const extension of possibleExtensions) {
+			const indexPathWithExtension = fp.join(fullPath, 'index.' + extension)
+			if (fullPathCache[indexPathWithExtension]) {
+				return indexPathWithExtension
 			}
 		}
 	}
 
-	const possibleExtensions = _.uniq([preferredExtension.toLowerCase(), ...defaultExtension])
+	if (fp.extname(fullPath) && await fs.exists(fullPath) && (await fs.lstat(fullPath)).isFile()) {
+		return fullPath
+	}
+
 	for (const extension of possibleExtensions) {
 		const fullPathWithExtension = fullPath + '.' + extension
 		if (await fs.exists(fullPathWithExtension) && (await fs.lstat(fullPathWithExtension)).isFile()) {
 			return fullPathWithExtension
+		}
+	}
+
+	if (await fs.exists(fullPath) && (await fs.lstat(fullPath)).isDirectory()) {
+		const indexPath = await tryGetFullPath([...pathList, 'index'], preferredExtension, defaultExtensions)
+		if (indexPath !== undefined) {
+			return indexPath
 		}
 	}
 }

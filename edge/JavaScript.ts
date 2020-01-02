@@ -73,7 +73,7 @@ export default class JavaScript implements Language {
 		return true
 	}
 
-	private async setFileCache(filePath: string, fileIdentifierCache: Map<FilePath, IdentifierMap>) {
+	private async setFileCache(filePath: string, fileIdentifierCache?: Map<FilePath, IdentifierMap>, fullPathCache?: { [fullPath: string]: boolean }) {
 		if (filePath.includes(fp.sep) === false) {
 			return
 		}
@@ -96,7 +96,7 @@ export default class JavaScript implements Language {
 		}
 
 		const codeTree = await JavaScript.parse(filePath)
-		const existingImports = await getExistingImportsWithFullPath(codeTree)
+		const existingImports = await getExistingImportsWithFullPath(codeTree, fullPathCache)
 		const importedIdentifiers = getImportedIdentifiers(existingImports)
 
 		this.importPattern.scan(existingImports)
@@ -196,8 +196,6 @@ export default class JavaScript implements Language {
 				}
 
 				if (this.fileCache.length === 0) {
-					const sourceFileLinks = await vscode.workspace.findFiles('**/*')
-
 					const priorityPathList = _.chain([vscode.window.activeTextEditor, ...vscode.window.visibleTextEditors])
 						.compact()
 						.map(editor => _.trimEnd(fp.dirname(editor.document.fileName), fp.sep) + fp.sep)
@@ -205,14 +203,17 @@ export default class JavaScript implements Language {
 						.sortBy(path => -path.split(fp.sep).length)
 						.value()
 
+					const sourceFileLinks = await vscode.workspace.findFiles('**/*')
 					const sortedFileLinks = _.sortBy(sourceFileLinks, link => {
 						const rank = _.findIndex(priorityPathList, path => link.fsPath.startsWith(path))
 						return rank === -1 ? Infinity : rank
 					})
+
 					const fileIdentifierCache = new Map<FilePath, IdentifierMap>()
+					const fullPathCache = _.fromPairs(sourceFileLinks.map(link => [link.fsPath, true]))
 
 					for (const link of sortedFileLinks) {
-						await this.setFileCache(link.fsPath, fileIdentifierCache)
+						await this.setFileCache(link.fsPath, fileIdentifierCache, fullPathCache)
 					}
 				}
 
@@ -257,7 +258,7 @@ export default class JavaScript implements Language {
 	}
 
 	async addItem(filePath: string) {
-		await this.setFileCache(filePath, new Map<FilePath, IdentifierMap>())
+		await this.setFileCache(filePath)
 
 		if (fp.basename(filePath) === 'package.json') {
 			await this.setItems()
@@ -1380,12 +1381,12 @@ interface ImportStatementForScanning extends ImportStatementForReadOnly {
 	fullPath: string | undefined // Do not write optional (?) as this cannot be compatible with ImportStatementForReadOnly
 }
 
-async function getExistingImportsWithFullPath(codeTree: ts.SourceFile): Promise<Array<ImportStatementForScanning>> {
+async function getExistingImportsWithFullPath(codeTree: ts.SourceFile, fullPathCache?: { [fullPath: string]: boolean }): Promise<Array<ImportStatementForScanning>> {
 	const imports = getExistingImports(codeTree)
 
 	return Promise.all(imports.map(async stub => ({
 		...stub,
-		fullPath: stub.path.startsWith('.') ? await tryGetFullPath([fp.dirname(codeTree.fileName), stub.path], fp.extname(codeTree.fileName).replace(/^\./, '')) : undefined,
+		fullPath: stub.path.startsWith('.') ? await tryGetFullPath([fp.dirname(codeTree.fileName), stub.path], fp.extname(codeTree.fileName).replace(/^\./, ''), undefined, fullPathCache) : undefined,
 	})))
 }
 
