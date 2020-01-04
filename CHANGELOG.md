@@ -1,3 +1,6 @@
+## 1.4.2
+- Fix listing duplicate node modules and their identifiers.
+
 ## 1.4.1
 - Add file name for exported identifiers.
 - Amend no re-initialization when extension configuration has been changed.

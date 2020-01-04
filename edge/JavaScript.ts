@@ -123,6 +123,10 @@ export default class JavaScript implements Language {
 					continue
 				}
 
+				if (_.lowerCase(identifier).replace(/\s/g, '') === _.lowerCase(path).replace(/\s/g, '')) {
+					continue
+				}
+
 				if (nodeIdentifierItems.some(item => item.identifier === identifier && item.name === path)) {
 					continue
 				}
