@@ -118,7 +118,7 @@ export default class JavaScript implements Language {
 			}
 
 			const nodeIdentifierItems = this.nodeIdentifierCache.get(packageJsonPath)
-			for (const { identifier, path } of importedIdentifiers) {
+			for (const { identifier, path, kind } of importedIdentifiers) {
 				if (path.startsWith('.') || path.startsWith('!')) {
 					continue
 				}
@@ -131,7 +131,7 @@ export default class JavaScript implements Language {
 					continue
 				}
 
-				nodeIdentifierItems.push(new NodeIdentifierItem(path, identifier, this.importPattern))
+				nodeIdentifierItems.push(new NodeIdentifierItem(path, kind, identifier, this.importPattern))
 			}
 		}
 
@@ -1015,7 +1015,7 @@ class NodeModuleItem implements Item {
 		return this.addImportInternal(editor, language, undefined)
 	}
 
-	protected async addImportInternal(editor: vscode.TextEditor, language: JavaScript, preselectedIdentifier: string | undefined) {
+	protected async addImportInternal(editor: vscode.TextEditor, language: JavaScript, preselected: { kind: 'default' | 'namespace' | 'named', name: string } | undefined) {
 		if (!editor) {
 			return null
 		}
@@ -1036,7 +1036,7 @@ class NodeModuleItem implements Item {
 		const duplicateImport = existingImports.find(item => item.path === this.name)
 		if (duplicateImport) {
 			if (
-				!preselectedIdentifier && typeDefinitions.length === 0 ||
+				!preselected && typeDefinitions.length === 0 ||
 				!ts.isImportDeclaration(duplicateImport.node) ||
 				!duplicateImport.node.importClause ||
 				(
@@ -1049,10 +1049,13 @@ class NodeModuleItem implements Item {
 				return null
 			}
 
-			const selectedIdentifier = preselectedIdentifier || await vscode.window.showQuickPick([
-				...(importDefaultIsPreferred ? ['default'] : []),
-				...typeDefinitions,
-			])
+			const selectedIdentifier = (
+				preselected && (preselected.kind === 'named' ? preselected.name : 'default') ||
+				await vscode.window.showQuickPick([
+					...(importDefaultIsPreferred ? ['default'] : []),
+					...typeDefinitions,
+				])
+			)
 			if (!selectedIdentifier) {
 				return null
 			}
@@ -1107,9 +1110,9 @@ class NodeModuleItem implements Item {
 
 		let kind: ImportKind = null
 		let name = autoName
-		if (preselectedIdentifier) {
-			kind = 'named'
-			name = preselectedIdentifier
+		if (preselected) {
+			kind = preselected.kind
+			name = preselected.name
 
 		} else if (typeDefinitions.length === 0) {
 			if (importDefaultIsPreferred) {
@@ -1250,9 +1253,12 @@ class NodeModuleItem implements Item {
 class NodeIdentifierItem extends NodeModuleItem {
 	readonly identifier: string
 	readonly detail: string
+	private kind: 'default' | 'namespace' | 'named'
 
-	constructor(name: string, identifier: string, importPattern: ImportPattern) {
+	constructor(name: string, kind: 'default' | 'namespace' | 'named', identifier: string, importPattern: ImportPattern) {
 		super(name, importPattern)
+
+		this.kind = kind
 
 		this.identifier = identifier
 		this.label = identifier
@@ -1260,7 +1266,11 @@ class NodeIdentifierItem extends NodeModuleItem {
 	}
 
 	async addImport(editor: vscode.TextEditor, language: JavaScript) {
-		return super.addImportInternal(editor, language, this.identifier)
+		const preselect = {
+			kind: this.kind,
+			name: this.identifier,
+		}
+		return super.addImportInternal(editor, language, preselect)
 	}
 }
 
