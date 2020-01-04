@@ -53,10 +53,10 @@ const getPackageJsonList = _.memoize(async () => {
 const defaultImportCache = new Map<FilePath, string>()
 const namespaceImportCache = new Map<FilePath, string>()
 const nodeModuleCache = new Map<PackageJsonPath, Array<NodeModuleItem>>()
+const nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 
 export default class JavaScript implements Language {
 	private fileCache: Array<FileItem> = []
-	private nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 	private importPattern = new ImportPattern()
 
 	protected config: JavaScriptConfiguration
@@ -113,11 +113,11 @@ export default class JavaScript implements Language {
 		const packageJsonList = await getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(filePath, packageJsonList)?.packageJsonPath
 		if (packageJsonPath) {
-			if (this.nodeIdentifierCache.has(packageJsonPath) === false) {
-				this.nodeIdentifierCache.set(packageJsonPath, [])
+			if (nodeIdentifierCache.has(packageJsonPath) === false) {
+				nodeIdentifierCache.set(packageJsonPath, [])
 			}
 
-			const nodeIdentifierItems = this.nodeIdentifierCache.get(packageJsonPath)
+			const nodeIdentifierItems = nodeIdentifierCache.get(packageJsonPath)
 			for (const { identifier, path, kind } of importedIdentifiers) {
 				if (path.startsWith('.') || path.startsWith('!')) {
 					continue
@@ -222,13 +222,13 @@ export default class JavaScript implements Language {
 				}
 
 				for (const { packageJsonPath } of packageJsonList) {
-					if (this.nodeIdentifierCache.has(packageJsonPath) && nodeModuleCache.has(packageJsonPath)) {
+					if (nodeIdentifierCache.has(packageJsonPath) && nodeModuleCache.has(packageJsonPath)) {
 						const dependencyNameList = nodeModuleCache.get(packageJsonPath).map(item => item.name)
-						const nodeIdentifiers = _.chain(this.nodeIdentifierCache.get(packageJsonPath))
+						const nodeIdentifiers = _.chain(nodeIdentifierCache.get(packageJsonPath))
 							.filter(item => dependencyNameList.includes(item.name))
 							.sortBy(item => item.name.toLowerCase(), item => item.identifier.toLowerCase())
 							.value()
-						this.nodeIdentifierCache.set(packageJsonPath, nodeIdentifiers)
+						nodeIdentifierCache.set(packageJsonPath, nodeIdentifiers)
 					}
 				}
 
@@ -252,7 +252,7 @@ export default class JavaScript implements Language {
 		const packageJsonList = await getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
 		const nodeModuleItems = packageJsonPath && nodeModuleCache.get(packageJsonPath) || []
-		const nodeIdentifierItems = packageJsonPath && nodeModuleCache.has(packageJsonPath) && this.nodeIdentifierCache.get(packageJsonPath) || []
+		const nodeIdentifierItems = packageJsonPath && nodeModuleCache.has(packageJsonPath) && nodeIdentifierCache.get(packageJsonPath) || []
 
 		return [
 			...nodeModuleItems,
@@ -437,9 +437,9 @@ export default class JavaScript implements Language {
 
 	dispose() {
 		this.fileCache = []
-		this.nodeIdentifierCache.clear()
 
 		nodeModuleCache.clear()
+		nodeIdentifierCache.clear()
 		namespaceImportCache.clear()
 		defaultImportCache.clear()
 		getPackageJsonList.cache.clear()
@@ -1022,6 +1022,9 @@ class NodeModuleItem implements Item {
 
 		const document = editor.document
 
+		const packageJsonList = await getPackageJsonList()
+		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
+
 		const importDefaultIsPreferred = language.checkIfImportDefaultIsPreferredOverNamespace()
 		const typeDefinitions = await this.getTypeDefinitions(document)
 
@@ -1114,7 +1117,10 @@ class NodeModuleItem implements Item {
 			kind = preselected.kind
 			name = preselected.name
 
-		} else if (typeDefinitions.length === 0) {
+		} else if (
+			typeDefinitions.length === 0 ||
+			(defaultImportCache.has(this.name) || namespaceImportCache.has(this.name)) && nodeIdentifierCache.get(packageJsonPath)?.filter(item => item.name === this.name && item.kind === 'named').length === 0
+		) {
 			if (importDefaultIsPreferred) {
 				kind = 'default'
 				name = defaultImportCache.get(this.name) || autoName
@@ -1253,7 +1259,7 @@ class NodeModuleItem implements Item {
 class NodeIdentifierItem extends NodeModuleItem {
 	readonly identifier: string
 	readonly detail: string
-	private kind: 'default' | 'namespace' | 'named'
+	readonly kind: 'default' | 'namespace' | 'named'
 
 	constructor(name: string, kind: 'default' | 'namespace' | 'named', identifier: string, importPattern: ImportPattern) {
 		super(name, importPattern)

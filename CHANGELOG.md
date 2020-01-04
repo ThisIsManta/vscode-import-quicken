@@ -1,6 +1,7 @@
 ## 1.4.2
 - Fix listing duplicate node modules and their identifiers.
 - Fix adding only named imports for cached node module identifiers.
+- Add ability to skip asking for a named import only if the default/namespace import is only used.
 
 ## 1.4.1
 - Add file name for exported identifiers.
