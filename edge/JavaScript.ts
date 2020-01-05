@@ -601,13 +601,16 @@ export default class JavaScript implements Language {
 }
 
 class FileItem implements Item {
-	label: string;
-	description: string;
+	readonly id: string
+	label: string
+	description: string
 	readonly info: FileInfo
 
 	protected importPattern: ImportPattern
 
 	constructor(filePath: string, importPattern: ImportPattern) {
+		this.id = filePath
+
 		this.info = new FileInfo(filePath)
 		this.importPattern = importPattern
 
@@ -690,15 +693,17 @@ class FileItem implements Item {
 }
 
 class FileIdentifierItem extends FileItem {
+	readonly id: string
+	readonly name: string
+	readonly defaultExported: boolean
 	label: string
 	description: string
 	detail: string
 
-	readonly name: string
-	readonly defaultExported: boolean
-
 	constructor(filePath: string, name: string, sourceText: string, importPattern: ImportPattern) {
 		super(filePath, importPattern)
+
+		this.id = filePath + '::' + name
 
 		this.name = name
 
@@ -999,6 +1004,7 @@ class FileIdentifierItem extends FileItem {
 }
 
 class NodeModuleItem implements Item {
+	readonly id: string
 	readonly name: string
 	label: string
 	description: string
@@ -1006,7 +1012,9 @@ class NodeModuleItem implements Item {
 	protected importPattern: ImportPattern
 
 	constructor(name: string, importPattern: ImportPattern) {
+		this.id = name
 		this.name = name
+
 		this.label = name
 		this.importPattern = importPattern
 	}
@@ -1257,16 +1265,17 @@ class NodeModuleItem implements Item {
 }
 
 class NodeIdentifierItem extends NodeModuleItem {
-	readonly identifier: string
-	readonly detail: string
+	readonly id: string
 	readonly kind: 'default' | 'namespace' | 'named'
+	readonly identifier: string
 
 	constructor(name: string, kind: 'default' | 'namespace' | 'named', identifier: string, importPattern: ImportPattern) {
 		super(name, importPattern)
 
+		this.id = name + '::' + identifier + '::' + kind
 		this.kind = kind
-
 		this.identifier = identifier
+
 		this.label = identifier
 		this.description = name
 	}

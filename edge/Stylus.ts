@@ -222,11 +222,14 @@ export default class Stylus implements Language {
 }
 
 class FileItem implements Item {
-	readonly label: string;
-	readonly description: string;
+	readonly id: string
+	readonly label: string
+	readonly description: string
 	readonly fileInfo: FileInfo
 
 	constructor(fileInfo: FileInfo, rootPath: string) {
+		this.id = fileInfo.fullPath
+
 		this.fileInfo = fileInfo
 
 		this.description = _.trim(fp.dirname(this.fileInfo.fullPath.substring(rootPath.length)), fp.sep)

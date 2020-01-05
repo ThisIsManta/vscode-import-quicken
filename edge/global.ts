@@ -22,6 +22,7 @@ export interface Language extends vscode.Disposable {
 }
 
 export interface Item extends vscode.QuickPickItem {
+	readonly id: string
 	addImport(editor: vscode.TextEditor, language: Language): Promise<null | undefined | void>
 }
 

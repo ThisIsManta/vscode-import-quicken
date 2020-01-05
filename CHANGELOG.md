@@ -1,3 +1,6 @@
+## 1.5.0
+- Add ability to sort recently used items at the top of the list.
+
 ## 1.4.2
 - Fix listing duplicate node modules and their identifiers.
 - Fix adding only named imports for cached node module identifiers.

@@ -97,6 +97,11 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}))
 
+	const recentlyUsedIds = new Map<Language, Array<Item['id']>>()
+	for (const language of languages) {
+		recentlyUsedIds.set(language, context.workspaceState.get('recentlyUsedIds::' + language.constructor.name, []))
+	}
+
 	context.subscriptions.push(vscode.commands.registerCommand('importQuicken.addImport', async () => {
 		const editor = vscode.window.activeTextEditor
 		const document = editor && editor.document
@@ -107,9 +112,19 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		for (const language of languages) {
-			const items = await language.getItems(document)
+			let items = await language.getItems(document)
 			if (!items) {
 				continue
+			}
+
+			// Sort items by recently used first
+			const usedIds = recentlyUsedIds.get(language)
+			if (usedIds.length > 0) {
+				const hash: { [id: string]: number } = usedIds.reduce((hash, id, rank) => {
+					hash[id] = rank
+					return hash
+				}, {})
+				items = _.sortBy(items, item => hash[item.id] ?? Infinity)
 			}
 
 			// Stop processing if the active editor has been changed
@@ -133,6 +148,22 @@ export function activate(context: vscode.ExtensionContext) {
 				_.defer(() => {
 					// Insert the snippet
 					selectedItem.addImport(editor, language)
+
+					// Update item sorting order
+					const rank = usedIds.indexOf(selectedItem.id)
+					if (rank !== 0) {
+						if (rank >= 1) {
+							usedIds.splice(rank, 1)
+						}
+
+						usedIds.unshift(selectedItem.id)
+
+						if (usedIds.length > 50) {
+							usedIds.splice(50, usedIds.length - 50)
+						}
+
+						context.workspaceState.update('recentlyUsedIds::' + language.constructor.name, usedIds)
+					}
 				})
 			})
 			picker.show()
