@@ -23,3 +23,5 @@ Fixing broken path in an `import`/`require` statement has never been this easy. 
 ## Advance usage
 
 In order to populate [Node.js APIs](https://nodejs.org/api/), such as `child_process`, `crypto`, `fs`, and so on, the module [`@types/node`](https://www.npmjs.com/package/@types/node) must be installed locally or globally using `npm install @types/node`.
+
+With the settings `importQuicken.autoCopy` set to `true`, your recently selected import name is automatically copied into the clipboard so you can paste it immediately without having to repeat yourself.

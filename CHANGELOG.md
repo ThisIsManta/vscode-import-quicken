@@ -1,5 +1,6 @@
 ## 1.5.0
 - Add ability to sort recently used items at the top of the list.
+- Add `autoCopy` settings.
 
 ## 1.4.2
 - Fix listing duplicate node modules and their identifiers.

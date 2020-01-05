@@ -53,6 +53,11 @@
 		"configuration": {
 			"title": "Import Quicken",
 			"properties": {
+				"importQuicken.autoCopy": {
+					"description": "Control whether the extension should put the recently selected name into the clipboard so you can paste it later.",
+					"type": "boolean",
+					"default": false
+				},
 				"importQuicken.javascript.filter": {
 					"description": "Filter the files shown in the list when adding an import/require statement. Both keys and values must be written in regular expression. For example, you are working on a file named \"foo.js\", and you want to see only the files ending with \".test.js\" in the list when adding an import statement, then you must set this to `{ \"/foo\\\\.js$\": \"\\\\.test\\\\.js$\" }`. Note that the path separators will always be POSIX slash characters. The term `${TM_FILENAME_BASE}` in your right-side regular expression will be replaced with the active file name without its extension.",
 					"type": "object",

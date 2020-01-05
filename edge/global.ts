@@ -6,7 +6,7 @@ import * as vscode from 'vscode'
 import * as JavaScript from './JavaScript'
 
 export interface ExtensionConfiguration {
-	history: number
+	autoCopy: boolean
 	javascript: JavaScript.JavaScriptConfiguration
 	typescript: JavaScript.JavaScriptConfiguration
 }
@@ -24,6 +24,13 @@ export interface Language extends vscode.Disposable {
 export interface Item extends vscode.QuickPickItem {
 	readonly id: string
 	addImport(editor: vscode.TextEditor, language: Language): Promise<null | undefined | void>
+}
+
+export function setImportNameToClipboard(name: string) {
+	const config = vscode.workspace.getConfiguration().get<ExtensionConfiguration>('importQuicken')
+	if (config.autoCopy && name) {
+		vscode.env.clipboard.writeText(name)
+	}
 }
 
 export async function findFilesRoughly(filePath: string, fileExtensions?: Array<string>): Promise<Array<string>> {

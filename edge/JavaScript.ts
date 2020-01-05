@@ -7,7 +7,7 @@ import * as ts from 'typescript'
 import * as vscode from 'vscode'
 
 import FileInfo, { getPosixPath } from './FileInfo'
-import { ExtensionConfiguration, Language, Item, findFilesRoughly, hasFileExtensionOf, tryGetFullPath } from './global'
+import { ExtensionConfiguration, Language, Item, findFilesRoughly, hasFileExtensionOf, tryGetFullPath, setImportNameToClipboard } from './global'
 
 export interface JavaScriptConfiguration {
 	filter: Readonly<{ [key: string]: string }>
@@ -666,6 +666,7 @@ class FileItem implements Item {
 			const snippet = await getImportOrRequireSnippet('require', 'default', autoName, path, document, this.importPattern)
 			await editor.edit(worker => worker.insert(activeCursorPosition, snippet))
 			await JavaScript.fixESLint()
+			setImportNameToClipboard(autoName)
 			return null
 		}
 
@@ -1000,6 +1001,7 @@ class FileIdentifierItem extends FileItem {
 		const snippet = await getImportOrRequireSnippet('infer', kind, name, path, document, importPattern)
 		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
 		await JavaScript.fixESLint()
+		setImportNameToClipboard(name)
 	}
 }
 
@@ -1170,6 +1172,7 @@ class NodeModuleItem implements Item {
 		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.name, document, importPattern)
 		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, this.name, document), snippet))
 		await JavaScript.fixESLint()
+		setImportNameToClipboard(name)
 	}
 
 	private async getTypeDefinitions(document: vscode.TextDocument) {
