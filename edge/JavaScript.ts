@@ -1,13 +1,14 @@
 import * as cp from 'child_process'
 import * as glob from 'glob'
 import * as _ from 'lodash'
+import { Minimatch } from 'minimatch'
 import { fs } from 'mz'
 import * as fp from 'path'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
 
 import FileInfo, { getPosixPath } from './FileInfo'
-import { ExtensionConfiguration, Language, Item, findFilesRoughly, hasFileExtensionOf, tryGetFullPath, setImportNameToClipboard } from './global'
+import { ExtensionConfiguration, Language, Item, findFilesRoughly, tryGetFullPath, setImportNameToClipboard } from './global'
 
 export interface JavaScriptConfiguration {
 	filter: Readonly<{ [key: string]: string }>
@@ -24,52 +25,108 @@ const JAVASCRIPT_IDENTIFIER_PATTERN = /^(?!(?:do|if|in|for|let|new|try|var|case|
 
 type PackageJsonPath = string
 
-const getPackageJsonList = _.memoize(async () => {
-	const yarnLockPathList = (await vscode.workspace.findFiles('**/yarn.lock', '**/node_modules/**')).map(link => link.fsPath)
+export default class JavaScript implements Language {
+	private fileCache: Array<FileItem> = []
+	readonly importPattern = new ImportPattern()
+	readonly defaultImportCache = new Map<FilePath, string>()
+	readonly namespaceImportCache = new Map<FilePath, string>()
+	readonly nodeModuleCache = new Map<PackageJsonPath, Array<NodeModuleItem>>()
+	readonly nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 
-	const packageJsonPathList = (await vscode.workspace.findFiles('**/package.json', '**/node_modules/**')).map(link => link.fsPath)
+	private userConfig: { javascript: JavaScriptConfiguration, typescript: JavaScriptConfiguration }
 
-	const packageJsonList: Array<{ packageJsonPath: PackageJsonPath, nodeModulePathList: Array<string> }> = []
-	for (const packageJsonPath of packageJsonPathList) {
-		const nodeModulePathList: Array<string> = []
-		for (const yarnLockPath of yarnLockPathList) {
-			if (await checkYarnWorkspace(packageJsonPath, yarnLockPath)) {
-				nodeModulePathList.push(fp.dirname(yarnLockPath))
-			}
+	private tsConfigCache = new Map<string, { compilerOptions: ts.CompilerOptions, include?: Array<string>, exclude?: Array<string> }>()
+	private tsConfigWatcher: vscode.FileSystemWatcher
 
-			nodeModulePathList.push(fp.dirname(packageJsonPath))
-		}
-
-		packageJsonList.push({
-			packageJsonPath,
-			nodeModulePathList: _.uniq(nodeModulePathList),
+	constructor() {
+		this.tsConfigWatcher = vscode.workspace.createFileSystemWatcher('**/tsconfig.json')
+		this.tsConfigWatcher.onDidCreate(link => {
+			this.setTypeScriptConfiguration(link.fsPath)
+		})
+		this.tsConfigWatcher.onDidChange(link => {
+			this.setTypeScriptConfiguration(link.fsPath)
+		})
+		this.tsConfigWatcher.onDidDelete(link => {
+			this.tsConfigCache.delete(link.fsPath)
 		})
 	}
 
-	return _.orderBy(packageJsonList, ({ packageJsonPath }) => fp.dirname(packageJsonPath).split(fp.sep).length, 'desc')
-})
-
-// Note that the followings are shared with TypeScript language class
-const defaultImportCache = new Map<FilePath, string>()
-const namespaceImportCache = new Map<FilePath, string>()
-const nodeModuleCache = new Map<PackageJsonPath, Array<NodeModuleItem>>()
-const nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
-
-export default class JavaScript implements Language {
-	private fileCache: Array<FileItem> = []
-	private importPattern = new ImportPattern()
-
-	protected config: JavaScriptConfiguration
-
-	setConfiguration(config: ExtensionConfiguration) {
-		this.config = config.javascript
+	setUserConfiguration(config: ExtensionConfiguration) {
+		this.userConfig = {
+			javascript: config.javascript,
+			typescript: config.typescript,
+		}
 	}
 
-	getCompatibleFileExtensions() {
-		return ['js', 'jsx']
+	getPackageJsonList = _.memoize(async () => {
+		const [yarnLockPathList, packageJsonPathList] = await Promise.all([
+			vscode.workspace.findFiles('**/yarn.lock', '**/node_modules/**').then(links => links.map(link => link.fsPath)),
+			vscode.workspace.findFiles('**/package.json', '**/node_modules/**').then(links => links.map(link => link.fsPath)),
+		])
+
+		const packageJsonList: Array<{ packageJsonPath: PackageJsonPath, nodeModulePathList: Array<string> }> = []
+		for (const packageJsonPath of packageJsonPathList) {
+			const nodeModulePathList: Array<string> = []
+			for (const yarnLockPath of yarnLockPathList) {
+				if (await checkYarnWorkspace(packageJsonPath, yarnLockPath)) {
+					nodeModulePathList.push(fp.dirname(yarnLockPath))
+				}
+
+				nodeModulePathList.push(fp.dirname(packageJsonPath))
+			}
+
+			packageJsonList.push({
+				packageJsonPath,
+				nodeModulePathList: _.uniq(nodeModulePathList),
+			})
+		}
+
+		return _.orderBy(packageJsonList, ({ packageJsonPath }) => fp.dirname(packageJsonPath).split(fp.sep).length, 'desc')
+	})
+
+	private async setTypeScriptConfiguration(configFilePath: string) {
+		const { config, error } = ts.parseConfigFileTextToJson(configFilePath, await fs.readFile(configFilePath, 'utf-8'))
+		if (config && !error) {
+			this.tsConfigCache.set(configFilePath, config)
+		}
 	}
 
-	checkIfImportDefaultIsPreferredOverNamespace() {
+	private getTypeScriptConfiguration(document: vscode.TextDocument) {
+		for (const [filePath, tsconfig] of _.sortBy(Array.from(this.tsConfigCache), ([path]) => -fp.dirname(path).split(fp.sep).length)) {
+			if (document.uri.fsPath.startsWith(fp.dirname(filePath) + fp.sep)) {
+				return {
+					filePath,
+					...tsconfig,
+				}
+			}
+		}
+	}
+
+	private getCompatibleFileExtensions(document: vscode.TextDocument) {
+		const originalExtension = _.trimStart(fp.extname(document.fileName), '.').toLowerCase()
+		const list = [originalExtension]
+
+		if (originalExtension.endsWith('x')) {
+			list.push(originalExtension.replace(/x$/, ''))
+
+		} else {
+			list.push(originalExtension + 'x')
+		}
+
+		const tsConfig = this.getTypeScriptConfiguration(document)
+		if (tsConfig?.compilerOptions.allowJs) {
+			list.push('ts', 'tsx', 'js', 'jsx')
+		}
+
+		return _.uniq(list.filter(extension => SUPPORTED_EXTENSION.test('.' + extension)))
+	}
+
+	checkIfImportDefaultIsPreferredOverNamespace(document: vscode.TextDocument) {
+		const tsConfig = this.getTypeScriptConfiguration(document)
+		if (tsConfig) {
+			return tsConfig.compilerOptions.esModuleInterop ?? false
+		}
+
 		return true
 	}
 
@@ -91,7 +148,7 @@ export default class JavaScript implements Language {
 		}
 
 		if (SUPPORTED_EXTENSION.test(filePath) === false) {
-			this.fileCache.push(new FileItem(filePath, this.importPattern))
+			this.fileCache.push(new FileItem(filePath))
 			return
 		}
 
@@ -103,21 +160,21 @@ export default class JavaScript implements Language {
 
 		for (const { kind, identifier, path, fullPath } of importedIdentifiers) {
 			if (kind === 'default') {
-				defaultImportCache.set(fullPath || path, identifier)
+				this.defaultImportCache.set(fullPath || path, identifier)
 
 			} else if (kind === 'namespace') {
-				namespaceImportCache.set(fullPath || path, identifier)
+				this.namespaceImportCache.set(fullPath || path, identifier)
 			}
 		}
 
-		const packageJsonList = await getPackageJsonList()
+		const packageJsonList = await this.getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(filePath, packageJsonList)?.packageJsonPath
 		if (packageJsonPath) {
-			if (nodeIdentifierCache.has(packageJsonPath) === false) {
-				nodeIdentifierCache.set(packageJsonPath, [])
+			if (this.nodeIdentifierCache.has(packageJsonPath) === false) {
+				this.nodeIdentifierCache.set(packageJsonPath, [])
 			}
 
-			const nodeIdentifierItems = nodeIdentifierCache.get(packageJsonPath)
+			const nodeIdentifierItems = this.nodeIdentifierCache.get(packageJsonPath)
 			for (const { identifier, path, kind } of importedIdentifiers) {
 				if (path.startsWith('.') || path.startsWith('!')) {
 					continue
@@ -137,7 +194,7 @@ export default class JavaScript implements Language {
 
 		for (const [name, { pathList, sourceText }] of await getExportedIdentifiers(codeTree, fileIdentifierCache)) {
 			if (_.uniq(pathList).length === 1) {
-				this.fileCache.push(new FileIdentifierItem(filePath, name, sourceText, this.importPattern))
+				this.fileCache.push(new FileIdentifierItem(filePath, name, sourceText))
 			}
 		}
 	}
@@ -146,6 +203,11 @@ export default class JavaScript implements Language {
 	async setItems() {
 		if (!this.workingThread) {
 			const λ = async () => {
+				const tsConfigLinks = await vscode.workspace.findFiles('**/tsconfig.json')
+				for (const link of tsConfigLinks) {
+					this.setTypeScriptConfiguration(link.fsPath)
+				}
+
 				// Do not await here for performance
 				const globalNodeJsAPIsPromise = new Promise<Array<string>>(resolve => {
 					cp.exec('npm prefix -g', { encoding: 'utf-8' }, (error, globalModulePath) => {
@@ -159,14 +221,14 @@ export default class JavaScript implements Language {
 					})
 				})
 
-				const packageJsonList = await getPackageJsonList()
+				const packageJsonList = await this.getPackageJsonList()
 				for (const { packageJsonPath, nodeModulePathList } of packageJsonList) {
-					if (nodeModuleCache.has(packageJsonPath)) {
+					if (this.nodeModuleCache.has(packageJsonPath)) {
 						continue
 					}
 
 					const nodeModuleItems: Array<NodeModuleItem> = []
-					nodeModuleCache.set(packageJsonPath, nodeModuleItems)
+					this.nodeModuleCache.set(packageJsonPath, nodeModuleItems)
 
 					const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
 					const dependencyNameList = _.chain([packageJson.devDependencies, packageJson.dependencies])
@@ -196,7 +258,7 @@ export default class JavaScript implements Language {
 						nodeModuleItems.push(new NodeModuleItem(name, this.importPattern))
 					}
 
-					nodeModuleCache.set(packageJsonPath, _.sortBy(nodeModuleItems, item => item.name.toLowerCase()))
+					this.nodeModuleCache.set(packageJsonPath, _.sortBy(nodeModuleItems, item => item.name.toLowerCase()))
 				}
 
 				if (this.fileCache.length === 0) {
@@ -222,13 +284,13 @@ export default class JavaScript implements Language {
 				}
 
 				for (const { packageJsonPath } of packageJsonList) {
-					if (nodeIdentifierCache.has(packageJsonPath) && nodeModuleCache.has(packageJsonPath)) {
-						const dependencyNameList = nodeModuleCache.get(packageJsonPath).map(item => item.name)
-						const nodeIdentifiers = _.chain(nodeIdentifierCache.get(packageJsonPath))
+					if (this.nodeIdentifierCache.has(packageJsonPath) && this.nodeModuleCache.has(packageJsonPath)) {
+						const dependencyNameList = this.nodeModuleCache.get(packageJsonPath).map(item => item.name)
+						const nodeIdentifiers = _.chain(this.nodeIdentifierCache.get(packageJsonPath))
 							.filter(item => dependencyNameList.includes(item.name))
 							.sortBy(item => item.name.toLowerCase(), item => item.identifier.toLowerCase())
 							.value()
-						nodeIdentifierCache.set(packageJsonPath, nodeIdentifiers)
+						this.nodeIdentifierCache.set(packageJsonPath, nodeIdentifiers)
 					}
 				}
 
@@ -242,17 +304,17 @@ export default class JavaScript implements Language {
 	}
 
 	async getItems(document: vscode.TextDocument) {
-		if (hasFileExtensionOf(document, this.getCompatibleFileExtensions()) === false) {
+		if (SUPPORTED_EXTENSION.test(document.fileName) === false) {
 			return null
 		}
 
 		const filter = this.createFileFilter(document)
 		const fileItems = this.fileCache.filter(file => filter(file.info))
 
-		const packageJsonList = await getPackageJsonList()
+		const packageJsonList = await this.getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
-		const nodeModuleItems = packageJsonPath && nodeModuleCache.get(packageJsonPath) || []
-		const nodeIdentifierItems = packageJsonPath && nodeModuleCache.has(packageJsonPath) && nodeIdentifierCache.get(packageJsonPath) || []
+		const nodeModuleItems = packageJsonPath && this.nodeModuleCache.get(packageJsonPath) || []
+		const nodeIdentifierItems = packageJsonPath && this.nodeModuleCache.has(packageJsonPath) && this.nodeIdentifierCache.get(packageJsonPath) || []
 
 		return [
 			...nodeModuleItems,
@@ -273,20 +335,21 @@ export default class JavaScript implements Language {
 		this.fileCache = this.fileCache.filter(file => file.info.fullPath !== filePath)
 
 		if (fp.basename(filePath) === 'package.json') {
-			getPackageJsonList.cache.clear()
-			nodeModuleCache.delete(filePath)
+			this.getPackageJsonList.cache.clear()
+			this.nodeModuleCache.delete(filePath)
+			this.nodeIdentifierCache.delete(filePath)
 		}
 	}
 
 	async fixImport(editor: vscode.TextEditor, document: vscode.TextDocument, cancellationToken: vscode.CancellationToken) {
-		if (hasFileExtensionOf(document, this.getCompatibleFileExtensions()) === false) {
+		if (SUPPORTED_EXTENSION.test(document.fileName) === false) {
 			return false
 		}
 
 		const documentFileInfo = new FileInfo(document.fileName)
 		const rootPath = vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath
 		const compatibleFileExtensions = _.sortBy(
-			this.getCompatibleFileExtensions(),
+			this.getCompatibleFileExtensions(document),
 			fileExtension => (fileExtension.startsWith(documentFileInfo.fileExtensionWithoutLeadingDot) ? 0 : 1)
 		)
 
@@ -391,7 +454,7 @@ export default class JavaScript implements Language {
 				nonResolvableImports.push(item)
 
 			} else if (matchingFullPaths.length === 1) {
-				const path = await new FileItem(matchingFullPaths[0], this.importPattern).getRelativePath(document)
+				const path = await new FileItem(matchingFullPaths[0]).getRelativePath(document, this.importPattern)
 				await editor.edit(worker => {
 					worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
 				})
@@ -417,7 +480,7 @@ export default class JavaScript implements Language {
 				return null
 			}
 
-			const path = await new FileItem(selectedItem.fullPath, this.importPattern).getRelativePath(document)
+			const path = await new FileItem(selectedItem.fullPath).getRelativePath(document, this.importPattern)
 			await editor.edit(worker => {
 				worker.replace(item.editableRange, `${item.quoteChar}${path}${item.quoteChar}`)
 			})
@@ -436,20 +499,22 @@ export default class JavaScript implements Language {
 	}
 
 	dispose() {
-		this.fileCache = []
-
-		nodeModuleCache.clear()
-		nodeIdentifierCache.clear()
-		namespaceImportCache.clear()
-		defaultImportCache.clear()
-		getPackageJsonList.cache.clear()
+		if (this.tsConfigWatcher) {
+			this.tsConfigWatcher.dispose()
+		}
 	}
 
-	protected createFileFilter(document: vscode.TextDocument) {
+	private createFileFilter(document: vscode.TextDocument) {
 		const rootPath = getPosixPath(vscode.workspace.getWorkspaceFolder(document.uri).uri.fsPath)
 		const filePath = getPosixPath(_.trimStart(document.fileName.substring(rootPath.length), fp.posix.sep))
 		const fileName = _.escapeRegExp(fp.basename(document.fileName).replace(/\..+/, ''))
-		const targetMatcher = _.chain(this.config.filter || {})
+
+		let languageConfig = /^typescript/.test(document.languageId) ? this.userConfig.typescript : this.userConfig.javascript
+		if (this.getTypeScriptConfiguration(document)?.compilerOptions.allowJs) {
+			languageConfig = _.merge({}, this.userConfig.javascript, this.userConfig.typescript, languageConfig)
+		}
+
+		const targetMatcher = _.chain(languageConfig?.filter || {})
 			.toPairs()
 			.filter(([source]) => new RegExp(source).test(filePath))
 			.map(([, target]) => {
@@ -459,9 +524,32 @@ export default class JavaScript implements Language {
 			.first()
 			.value() || undefined
 
+		const tsconfig = this.getTypeScriptConfiguration(document)
+
+		const jsAllowed = tsconfig?.compilerOptions.allowJs
+		const jsExtension = /jsx?$/i
+
+		// Presume the input pattern is written in POSIX style
+		const inclusionList = tsconfig?.include?.map(pattern =>
+			new Minimatch(fp.posix.resolve(getPosixPath(fp.dirname(tsconfig.filePath)), pattern)))
+		const exclusionList = tsconfig?.exclude?.map(pattern =>
+			new Minimatch(fp.posix.resolve(getPosixPath(fp.dirname(tsconfig.filePath)), pattern)))
+
 		return (fileInfo: FileInfo) => {
-			if (targetMatcher && fileInfo.fullPathForPOSIX.startsWith(rootPath + fp.posix.sep)) {
-				return targetMatcher.test(fileInfo.fullPathForPOSIX.substring(rootPath.length + 1))
+			if (targetMatcher && fileInfo.fullPathForPOSIX.startsWith(rootPath + fp.posix.sep) && targetMatcher.test(fileInfo.fullPathForPOSIX.substring(rootPath.length + 1)) === false) {
+				return false
+			}
+
+			if (!jsAllowed && jsExtension.test(fileInfo.fileExtensionWithoutLeadingDot)) {
+				return false
+			}
+
+			if (inclusionList && inclusionList.every(pattern => !pattern.match(fileInfo.fullPathForPOSIX))) {
+				return false
+			}
+
+			if (exclusionList && exclusionList.some(pattern => pattern.match(fileInfo.fullPathForPOSIX))) {
+				return false
 			}
 
 			return true
@@ -494,7 +582,7 @@ export default class JavaScript implements Language {
 	async convertImport(editor: vscode.TextEditor) {
 		const document = editor.document
 
-		if (hasFileExtensionOf(document, this.getCompatibleFileExtensions()) === false) {
+		if (SUPPORTED_EXTENSION.test(document.fileName) === false) {
 			return null
 		}
 
@@ -575,7 +663,7 @@ export default class JavaScript implements Language {
 							moduleName = '* as ' + moduleName
 						}
 
-					} else if (this.checkIfImportDefaultIsPreferredOverNamespace() === false) {
+					} else if (this.checkIfImportDefaultIsPreferredOverNamespace(document) === false) {
 						moduleName = '* as ' + moduleName
 					}
 				}
@@ -606,13 +694,10 @@ class FileItem implements Item {
 	description: string
 	readonly info: FileInfo
 
-	protected importPattern: ImportPattern
-
-	constructor(filePath: string, importPattern: ImportPattern) {
+	constructor(filePath: string) {
 		this.id = filePath
 
 		this.info = new FileInfo(filePath)
-		this.importPattern = importPattern
 
 		this.label = this.info.fileNameWithExtension
 
@@ -625,7 +710,7 @@ class FileItem implements Item {
 		}
 	}
 
-	async addImport(editor: vscode.TextEditor) {
+	async addImport(editor: vscode.TextEditor, language: JavaScript) {
 		if (!editor) {
 			return null
 		}
@@ -639,7 +724,7 @@ class FileItem implements Item {
 		// Save the current active cursor position as the asynchronous operations below might take too long to finish
 		const activeCursorPosition = editor.selection.active
 
-		const path = await this.getRelativePath(document)
+		const path = await this.getRelativePath(document, language.importPattern)
 
 		if (/^(css|less|sass|scss|styl)$/.test(this.info.fileExtensionWithoutLeadingDot)) {
 			const codeTree = await JavaScript.parse(document)
@@ -655,7 +740,7 @@ class FileItem implements Item {
 				return null
 			}
 
-			const snippet = await getImportOrRequireSnippet('infer', null, null, path, document, this.importPattern)
+			const snippet = await getImportOrRequireSnippet('infer', null, null, path, document, language.importPattern)
 			await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
 			await JavaScript.fixESLint()
 			return null
@@ -663,29 +748,29 @@ class FileItem implements Item {
 
 		if (this.info.fileExtensionWithoutLeadingDot === 'json') {
 			const autoName = _.words(this.info.fileNameWithoutExtension.replace(/\..+/g, '')).join('')
-			const snippet = await getImportOrRequireSnippet('require', 'default', autoName, path, document, this.importPattern)
+			const snippet = await getImportOrRequireSnippet('require', 'default', autoName, path, document, language.importPattern)
 			await editor.edit(worker => worker.insert(activeCursorPosition, snippet))
 			await JavaScript.fixESLint()
 			setImportNameToClipboard(autoName)
 			return null
 		}
 
-		const snippet = await getImportOrRequireSnippet('require', null, null, path, document, this.importPattern)
+		const snippet = await getImportOrRequireSnippet('require', null, null, path, document, language.importPattern)
 		await editor.edit(worker => worker.insert(activeCursorPosition, snippet))
 		await JavaScript.fixESLint()
 	}
 
-	async getRelativePath(document: vscode.TextDocument) {
+	async getRelativePath(document: vscode.TextDocument, importPattern: ImportPattern) {
 		const directoryPath = new FileInfo(document.fileName).directoryPath
 		const path = this.info.getRelativePath(directoryPath)
 
 		// Remove "/index.js" from the path
-		if (INDEX_FILE_PATTERN.test(this.info.fullPathForPOSIX) && this.importPattern.indexFile.hidden > this.importPattern.indexFile.visible) {
+		if (INDEX_FILE_PATTERN.test(this.info.fullPathForPOSIX) && importPattern.indexFile.hidden > importPattern.indexFile.visible) {
 			return fp.dirname(path)
 		}
 
 		// Remove file extension from the path
-		if (this.importPattern.fileExtensionExclusion.has(this.info.fileExtensionWithoutLeadingDot)) {
+		if (importPattern.fileExtensionExclusion.has(this.info.fileExtensionWithoutLeadingDot)) {
 			return path.replace(new RegExp(_.escapeRegExp(fp.extname(this.info.fileNameWithExtension)) + '$'), '')
 		}
 
@@ -701,8 +786,8 @@ class FileIdentifierItem extends FileItem {
 	description: string
 	detail: string
 
-	constructor(filePath: string, name: string, sourceText: string, importPattern: ImportPattern) {
-		super(filePath, importPattern)
+	constructor(filePath: string, name: string, sourceText: string) {
+		super(filePath)
 
 		this.id = filePath + '::' + name
 
@@ -728,7 +813,7 @@ class FileIdentifierItem extends FileItem {
 		})
 	}
 
-	private async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument): Promise<{ name: string, kind: ImportKind, path: string } | null> {
+	private async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument, language: JavaScript): Promise<{ name: string, kind: ImportKind, path: string } | null> {
 		const indexFilePath = await tryGetFullPath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
 		const workingDirectory = fp.dirname(document.fileName)
 
@@ -736,7 +821,7 @@ class FileIdentifierItem extends FileItem {
 
 		// Try to import from the closest index file
 		if (indexFilePath && this.info.fullPath !== indexFilePath && indexFilePath.startsWith(workingDirectory + fp.sep) === false) {
-			const indexFile = new FileItem(indexFilePath, this.importPattern)
+			const indexFile = new FileItem(indexFilePath)
 			const existingImports = getExistingImports(codeTree)
 
 			const getDuplicateImportForIndexFile = async () => {
@@ -772,17 +857,17 @@ class FileIdentifierItem extends FileItem {
 					continue
 				}
 
-				const path = await indexFile.getRelativePath(document)
+				const path = await indexFile.getRelativePath(document, language.importPattern)
 
 				if (exportedName === '*default') {
 					return {
-						name: defaultImportCache.get(indexFile.info.fullPath) || autoName,
+						name: language.defaultImportCache.get(indexFile.info.fullPath) || autoName,
 						kind: 'default',
 						path,
 					}
 				}
 
-				const namespace = namespaceImportCache.get(indexFile.info.fullPath)
+				const namespace = language.namespaceImportCache.get(indexFile.info.fullPath)
 				if (namespace) {
 					return {
 						name: namespace,
@@ -799,10 +884,10 @@ class FileIdentifierItem extends FileItem {
 			}
 		}
 
-		const path = await this.getRelativePath(document)
+		const path = await this.getRelativePath(document, language.importPattern)
 
 		if (this.defaultExported) {
-			const name = defaultImportCache.get(this.info.fullPath) || autoName
+			const name = language.defaultImportCache.get(this.info.fullPath) || autoName
 			return {
 				name,
 				kind: 'default',
@@ -810,7 +895,7 @@ class FileIdentifierItem extends FileItem {
 			}
 		}
 
-		const namespace = namespaceImportCache.get(this.info.fullPath)
+		const namespace = language.namespaceImportCache.get(this.info.fullPath)
 		if (namespace) {
 			return {
 				name: namespace,
@@ -827,7 +912,7 @@ class FileIdentifierItem extends FileItem {
 		}
 	}
 
-	async addImport(editor: vscode.TextEditor) {
+	async addImport(editor: vscode.TextEditor, language: JavaScript) {
 		if (!editor) {
 			return null
 		}
@@ -845,7 +930,7 @@ class FileIdentifierItem extends FileItem {
 
 		const [existingImports, { name, kind, path }] = await Promise.all([
 			getExistingImportsWithFullPath(codeTree),
-			this.getImportPattern(codeTree, document),
+			this.getImportPattern(codeTree, document, language),
 		])
 
 		const duplicateImport = getDuplicateImport(existingImports, path)
@@ -992,7 +1077,7 @@ class FileIdentifierItem extends FileItem {
 			}
 		}
 
-		let importPattern = this.importPattern
+		let importPattern = language.importPattern
 		if (existingImports.length > 0) {
 			importPattern = new ImportPattern()
 			importPattern.scan(existingImports)
@@ -1032,11 +1117,11 @@ class NodeModuleItem implements Item {
 
 		const document = editor.document
 
-		const packageJsonList = await getPackageJsonList()
+		const packageJsonList = await language.getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
 
-		const importDefaultIsPreferred = language.checkIfImportDefaultIsPreferredOverNamespace()
-		const typeDefinitions = await this.getTypeDefinitions(document)
+		const importDefaultIsPreferred = language.checkIfImportDefaultIsPreferredOverNamespace(document)
+		const typeDefinitions = await this.getTypeDefinitions(document, packageJsonList)
 
 		const codeTree = await JavaScript.parse(document)
 		if (!codeTree) {
@@ -1083,7 +1168,7 @@ class NodeModuleItem implements Item {
 				} else if (duplicateImport.node.importClause.namedBindings && ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 					// Try merging `default` with `{ named }`
 					const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
-					await editor.edit(worker => worker.insert(position, (defaultImportCache.get(this.name) || autoName) + ', '))
+					await editor.edit(worker => worker.insert(position, (language.defaultImportCache.get(this.name) || autoName) + ', '))
 					await JavaScript.fixESLint()
 					return null
 				}
@@ -1129,15 +1214,15 @@ class NodeModuleItem implements Item {
 
 		} else if (
 			typeDefinitions.length === 0 ||
-			(defaultImportCache.has(this.name) || namespaceImportCache.has(this.name)) && nodeIdentifierCache.get(packageJsonPath)?.filter(item => item.name === this.name && item.kind === 'named').length === 0
+			(language.defaultImportCache.has(this.name) || language.namespaceImportCache.has(this.name)) && language.nodeIdentifierCache.get(packageJsonPath)?.filter(item => item.name === this.name && item.kind === 'named').length === 0
 		) {
 			if (importDefaultIsPreferred) {
 				kind = 'default'
-				name = defaultImportCache.get(this.name) || autoName
+				name = language.defaultImportCache.get(this.name) || autoName
 
 			} else {
 				kind = 'namespace'
-				name = namespaceImportCache.get(this.name) || autoName
+				name = language.namespaceImportCache.get(this.name) || autoName
 			}
 
 		} else {
@@ -1151,11 +1236,11 @@ class NodeModuleItem implements Item {
 
 			if (select === 'default') {
 				kind = 'default'
-				name = defaultImportCache.get(this.name) || autoName
+				name = language.defaultImportCache.get(this.name) || autoName
 
 			} else if (select === '*') {
 				kind = 'namespace'
-				name = namespaceImportCache.get(this.name) || autoName
+				name = language.namespaceImportCache.get(this.name) || autoName
 
 			} else {
 				kind = 'named'
@@ -1175,8 +1260,7 @@ class NodeModuleItem implements Item {
 		setImportNameToClipboard(name)
 	}
 
-	private async getTypeDefinitions(document: vscode.TextDocument) {
-		const packageJsonList = await getPackageJsonList()
+	private async getTypeDefinitions(document: vscode.TextDocument, packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }>) {
 		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
 		if (!packageJson || !packageJson.nodeModulePathList) {
 			return []

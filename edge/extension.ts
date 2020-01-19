@@ -5,7 +5,6 @@ import FileChangeQueue from './FileChangeQueue'
 import { ExtensionConfiguration, Language, Item } from './global'
 import JavaScript from './JavaScript'
 import Stylus from './Stylus'
-import TypeScript from './TypeScript'
 
 // Do not `await` in this function body as all the commands must be registered as soon as possible to avoid a command-not-found error
 export function activate(context: vscode.ExtensionContext) {
@@ -13,7 +12,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const languages: Array<Language> = [
 		// Add supported languages here
-		new TypeScript(),
 		new JavaScript(),
 		new Stylus(),
 	]
@@ -35,7 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 		const config = vscode.workspace.getConfiguration().get<ExtensionConfiguration>('importQuicken')
 		for (const language of languages) {
-			language.setConfiguration(config)
+			language.setUserConfiguration(config)
 		}
 
 		await vscode.window.withProgress({
@@ -55,7 +53,7 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(() => {
 		const config = vscode.workspace.getConfiguration().get<ExtensionConfiguration>('importQuicken')
 		for (const language of languages) {
-			language.setConfiguration(config)
+			language.setUserConfiguration(config)
 		}
 	}))
 

@@ -20,7 +20,7 @@ let semiColonCount = 0
 export default class Stylus implements Language {
 	private fileItemCache: Array<FileItem> = []
 
-	setConfiguration(config: ExtensionConfiguration) { }
+	setUserConfiguration(config: ExtensionConfiguration) { }
 
 	async setItems() {
 		const fileLinks = await vscode.workspace.findFiles('**/*.{styl,css,jpg,jpeg,png,gif,svg,otf,ttf,woff,woff2,eot}')

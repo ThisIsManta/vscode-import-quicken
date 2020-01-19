@@ -12,7 +12,7 @@ export interface ExtensionConfiguration {
 }
 
 export interface Language extends vscode.Disposable {
-	setConfiguration(config: ExtensionConfiguration): void
+	setUserConfiguration(config: ExtensionConfiguration): void
 	setItems(): Promise<void>
 	getItems(document: vscode.TextDocument): Promise<Array<Item> | null>
 	addItem(filePath: string): Promise<void>
@@ -66,10 +66,6 @@ export async function findFilesRoughly(filePath: string, fileExtensions?: Array<
 	}
 
 	return matchingPaths
-}
-
-export function hasFileExtensionOf(document: vscode.TextDocument, extensions: Array<string>) {
-	return extensions.indexOf(_.trimStart(fp.extname(document.fileName), '.').toLowerCase()) >= 0
 }
 
 export async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, defaultExtensions = ['tsx', 'ts', 'jsx', 'js'], fullPathCache?: { [fullPath: string]: boolean }): Promise<string> {
