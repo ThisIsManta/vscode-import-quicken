@@ -110,19 +110,26 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		for (const language of languages) {
-			let items = await language.getItems(document)
-			if (!items) {
-				continue
+			const getItems = async () => {
+				let items = await language.getItems(document)
+				if (items) {
+					// Sort items by recently used first
+					const usedIds = recentlyUsedIds.get(language)
+					if (usedIds.length > 0) {
+						const hash: { [id: string]: number } = usedIds.reduce((hash, id, rank) => {
+							hash[id] = rank
+							return hash
+						}, {})
+						items = _.sortBy(items, item => hash[item.id] ?? Infinity)
+					}
+				}
+
+				return items
 			}
 
-			// Sort items by recently used first
-			const usedIds = recentlyUsedIds.get(language)
-			if (usedIds.length > 0) {
-				const hash: { [id: string]: number } = usedIds.reduce((hash, id, rank) => {
-					hash[id] = rank
-					return hash
-				}, {})
-				items = _.sortBy(items, item => hash[item.id] ?? Infinity)
+			const items = await getItems()
+			if (!items) {
+				continue
 			}
 
 			// Stop processing if the active editor has been changed
@@ -133,8 +140,27 @@ export function activate(context: vscode.ExtensionContext) {
 			const picker = vscode.window.createQuickPick<Item>()
 			picker.busy = initializing
 			picker.placeholder = 'Type a file path or node module name'
-			picker.items = items
 			picker.matchOnDescription = true
+			picker.items = await getItems()
+
+			let timerId: NodeJS.Timer
+			if (initializing) {
+				timerId = setInterval(async () => {
+					picker.items = await getItems()
+				}, 3000)
+
+				initializationPromise.then(async () => {
+					clearInterval(timerId)
+					timerId = undefined
+
+					picker.busy = false
+					picker.items = await getItems()
+				})
+			}
+
+			picker.onDidHide(() => {
+				clearInterval(timerId)
+			})
 			picker.onDidAccept(() => {
 				const [selectedItem] = picker.selectedItems
 				if (!selectedItem) {
@@ -148,6 +174,7 @@ export function activate(context: vscode.ExtensionContext) {
 					selectedItem.addImport(editor, language)
 
 					// Update item sorting order
+					const usedIds = recentlyUsedIds.get(language)
 					const rank = usedIds.indexOf(selectedItem.id)
 					if (rank !== 0) {
 						if (rank >= 1) {
@@ -165,13 +192,6 @@ export function activate(context: vscode.ExtensionContext) {
 				})
 			})
 			picker.show()
-
-			if (initializing) {
-				initializationPromise.then(async () => {
-					picker.busy = false
-					picker.items = await language.getItems(document)
-				})
-			}
 
 			break
 		}

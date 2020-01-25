@@ -2,6 +2,7 @@
 - Improve time performance by internally merging TypeScript into JavaScript.
 - Improve import generation recognition.
 - Add reading type definitions from index.d.ts and `types` in package.json.
+- Add progressive update to the list during initialization process.
 
 ## 1.5.0
 - Add ability to sort recently used items at the top of the list.
