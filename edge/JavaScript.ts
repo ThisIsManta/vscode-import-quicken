@@ -156,7 +156,7 @@ export default class JavaScript implements Language {
 		const existingImports = await getExistingImportsWithFullPath(codeTree, fullPathCache)
 		const importedIdentifiers = getImportedIdentifiers(existingImports)
 
-		this.importPattern.scan(existingImports)
+		this.importPattern.selectiveScan(existingImports)
 
 		for (const { kind, identifier, path, fullPath } of importedIdentifiers) {
 			if (kind === 'default') {
@@ -1080,7 +1080,8 @@ class FileIdentifierItem extends FileItem {
 		let importPattern = language.importPattern
 		if (existingImports.length > 0) {
 			importPattern = new ImportPattern()
-			importPattern.scan(existingImports)
+			importPattern.selectiveScan(existingImports)
+			importPattern.inconclusiveScan(codeTree)
 		}
 
 		const snippet = await getImportOrRequireSnippet('infer', kind, name, path, document, importPattern)
@@ -1251,7 +1252,8 @@ class NodeModuleItem implements Item {
 		let importPattern = this.importPattern
 		if (existingImports.length > 0) {
 			importPattern = new ImportPattern()
-			importPattern.scan(existingImports)
+			importPattern.selectiveScan(existingImports)
+			importPattern.inconclusiveScan(codeTree)
 		}
 
 		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.name, document, importPattern)
@@ -1399,7 +1401,7 @@ class ImportPattern {
 		none: 0,
 	}
 
-	scan(imports: Array<ImportStatementForScanning>) {
+	selectiveScan(imports: Array<ImportStatementForScanning>) {
 		const stringNodes = _.flatMap(imports, ({ node }) => findNodesRecursively<ts.StringLiteral>(node, node => ts.isStringLiteral(node)))
 		const quoteCount = _.countBy(stringNodes, node => node.getText().trim().charAt(0))
 		this.quoteCharacters.single += quoteCount['\''] ?? 0
@@ -1432,6 +1434,28 @@ class ImportPattern {
 
 				} else if (path.endsWith(fileExtensionWithLeadingDot) === false) {
 					this.fileExtensionExclusion.add(fileExtensionWithLeadingDot.replace(/^\./, ''))
+				}
+			}
+		}
+	}
+
+	inconclusiveScan(codeTree: ts.SourceFile) {
+		if (this.quoteCharacters.single === 0 && this.quoteCharacters.double === 0) {
+			for (const node of findNodesRecursively<ts.StringLiteral>(codeTree, node => ts.isStringLiteral(node))) {
+				const char = node.getFirstToken().getText()
+				if (char === '\'') {
+					this.quoteCharacters.single++
+
+				} else if (char === '"') {
+					this.quoteCharacters.double++
+				}
+			}
+		}
+
+		if (this.statementEnding.semi === 0 && this.statementEnding.none === 0) {
+			for (const node of codeTree.statements.concat(findNodesRecursively(codeTree, node => ts.isBlock(node)))) {
+				if (node.getLastToken().getText().endsWith(';')) {
+					this.statementEnding.semi++
 				}
 			}
 		}
@@ -1548,7 +1572,7 @@ type ImportKind = 'default' | 'namespace' | 'named' | null
 async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer', kind: ImportKind, name: string | null, path: string, document: vscode.TextDocument, importPattern: ImportPattern) {
 	const quote = importPattern.quoteCharacters.single >= importPattern.quoteCharacters.double ? '\'' : '"'
 
-	const statementEnding = importPattern.statementEnding.semi >= importPattern.statementEnding.none ? ';' : ''
+	const statementEnding = importPattern.statementEnding.semi > importPattern.statementEnding.none ? ';' : ''
 
 	const lineEnding = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
 

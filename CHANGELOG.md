@@ -1,5 +1,6 @@
 ## 1.5.1
 - Improve time performance by internally merging TypeScript into JavaScript.
+- Improve import generation recognition.
 
 ## 1.5.0
 - Add ability to sort recently used items at the top of the list.
