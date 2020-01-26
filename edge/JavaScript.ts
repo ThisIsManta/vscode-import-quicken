@@ -66,13 +66,11 @@ export default class JavaScript implements Language {
 
 		const packageJsonList: Array<{ packageJsonPath: PackageJsonPath, nodeModulePathList: Array<string> }> = []
 		for (const packageJsonPath of packageJsonPathList) {
-			const nodeModulePathList: Array<string> = []
+			const nodeModulePathList: Array<string> = [fp.dirname(packageJsonPath)]
 			for (const yarnLockPath of yarnLockPathList) {
 				if (await checkYarnWorkspace(packageJsonPath, yarnLockPath)) {
 					nodeModulePathList.push(fp.dirname(yarnLockPath))
 				}
-
-				nodeModulePathList.push(fp.dirname(packageJsonPath))
 			}
 
 			packageJsonList.push({
@@ -690,13 +688,12 @@ export default class JavaScript implements Language {
 
 class FileItem implements Item {
 	readonly id: string
+	readonly info: FileInfo
 	label: string
 	description: string
-	readonly info: FileInfo
 
 	constructor(filePath: string) {
 		this.id = filePath
-
 		this.info = new FileInfo(filePath)
 
 		this.label = this.info.fileNameWithExtension
@@ -790,7 +787,6 @@ class FileIdentifierItem extends FileItem {
 		super(filePath)
 
 		this.id = filePath + '::' + name
-
 		this.name = name
 
 		this.defaultExported = name === '*default'
@@ -1122,7 +1118,7 @@ class NodeModuleItem implements Item {
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
 
 		const importDefaultIsPreferred = language.checkIfImportDefaultIsPreferredOverNamespace(document)
-		const typeDefinitions = await this.getTypeDefinitions(document, packageJsonList)
+		const identifiers = await this.getDeclarationIdentifiers(document, packageJsonList)
 
 		const codeTree = await JavaScript.parse(document)
 		if (!codeTree) {
@@ -1135,7 +1131,7 @@ class NodeModuleItem implements Item {
 		const duplicateImport = existingImports.find(item => item.path === this.name)
 		if (duplicateImport) {
 			if (
-				!preselected && typeDefinitions.length === 0 ||
+				!preselected && identifiers.length === 0 ||
 				!ts.isImportDeclaration(duplicateImport.node) ||
 				!duplicateImport.node.importClause ||
 				(
@@ -1152,7 +1148,7 @@ class NodeModuleItem implements Item {
 				preselected && (preselected.kind === 'named' ? preselected.name : 'default') ||
 				await vscode.window.showQuickPick([
 					...(importDefaultIsPreferred ? ['default'] : []),
-					...typeDefinitions,
+					...identifiers,
 				])
 			)
 			if (!selectedIdentifier) {
@@ -1214,7 +1210,7 @@ class NodeModuleItem implements Item {
 			name = preselected.name
 
 		} else if (
-			typeDefinitions.length === 0 ||
+			identifiers.length === 0 ||
 			(language.defaultImportCache.has(this.name) || language.namespaceImportCache.has(this.name)) && language.nodeIdentifierCache.get(packageJsonPath)?.filter(item => item.name === this.name && item.kind === 'named').length === 0
 		) {
 			if (importDefaultIsPreferred) {
@@ -1229,7 +1225,7 @@ class NodeModuleItem implements Item {
 		} else {
 			const select = await vscode.window.showQuickPick([
 				importDefaultIsPreferred ? 'default' : '*',
-				...typeDefinitions,
+				...identifiers,
 			])
 			if (!select) {
 				return null
@@ -1262,23 +1258,32 @@ class NodeModuleItem implements Item {
 		setImportNameToClipboard(name)
 	}
 
-	private async getTypeDefinitions(document: vscode.TextDocument, packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }>) {
+	/**
+	 * @see https://www.typescriptlang.org/docs/handbook/declaration-files/publishing.html
+	 */
+	private async getDeclarationIdentifiers(document: vscode.TextDocument, packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }>) {
 		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
 		if (!packageJson || !packageJson.nodeModulePathList) {
 			return []
 		}
 
-		const Φ = async () => {
+		const declarationPath = await (async () => {
 			// Traverse through the deepest `node_modules` first
 			for (const rootPath of _.sortBy(packageJson.nodeModulePathList).reverse()) {
+				const indexDeclarationPath = fp.join(rootPath, 'node_modules', this.name, 'index.d.ts')
+				if (await fs.exists(indexDeclarationPath)) {
+					return indexDeclarationPath
+				}
+
 				const packageJsonPath = fp.join(rootPath, 'node_modules', this.name, 'package.json')
 				if (await fs.exists(packageJsonPath)) {
 					try {
-						const { typings } = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-						if (_.isString(typings)) {
-							const typeDefinitionPath = fp.resolve(fp.dirname(packageJsonPath), typings.replace(/\//g, fp.sep))
-							if (await fs.exists(typeDefinitionPath)) {
-								return typeDefinitionPath
+						const { types, typings } = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+						const mainDeclarationPath = types ?? typings
+						if (_.isString(mainDeclarationPath)) {
+							const typeDeclarationPath = fp.resolve(rootPath, 'node_modules', this.name, mainDeclarationPath.replace(/\//g, fp.sep))
+							if (await fs.exists(typeDeclarationPath)) {
+								return typeDeclarationPath
 							}
 						}
 
@@ -1287,30 +1292,29 @@ class NodeModuleItem implements Item {
 					}
 				}
 
-				const typeDefinitionPath = fp.join(rootPath, 'node_modules', '@types/' + this.name, 'index.d.ts')
-				if (await fs.exists(typeDefinitionPath)) {
-					return typeDefinitionPath
+				const definitelyTypedPath = fp.join(rootPath, 'node_modules', '@types/' + this.name, 'index.d.ts')
+				if (await fs.exists(definitelyTypedPath)) {
+					return definitelyTypedPath
 				}
 			}
-		}
+		})()
 
-		const typeDefinitionPath = await Φ()
-		if (typeDefinitionPath === undefined) {
+		if (!declarationPath) {
 			return []
 		}
 
+		const identifiers: Array<string> = []
 		try {
-			const codeTree = await JavaScript.parse(typeDefinitionPath)
-			const typeDefinitions: Array<string> = []
+			const codeTree = await JavaScript.parse(declarationPath)
 
 			let globallyExportedIdentifier: string = null
-			codeTree.forEachChild(node => {
+			for (const node of codeTree.statements) {
 				if (ts.isModuleDeclaration(node) && node.name.text === this.name && node.body && ts.isModuleBlock(node.body)) {
 					// Find `declare module '???' { ... }` where ??? is the module name
 					node.body.forEachChild(node => {
 						if (node.modifiers && node.modifiers.some(node => node.kind === ts.SyntaxKind.ExportKeyword) && (node as any).name) {
 							// Gather all `export` members
-							typeDefinitions.push((node as any).name.text)
+							identifiers.push((node as any).name.text)
 						}
 					})
 
@@ -1318,7 +1322,7 @@ class NodeModuleItem implements Item {
 					// Find `export as namespace ???`
 					globallyExportedIdentifier = node.name.text
 				}
-			})
+			}
 
 			if (globallyExportedIdentifier) {
 				// Gather all members inside `declare namespace ??? { ... }`
@@ -1334,22 +1338,32 @@ class NodeModuleItem implements Item {
 						if (ts.isVariableStatement(node)) {
 							for (const stub of node.declarationList.declarations) {
 								if (ts.isVariableDeclaration(stub) && ts.isIdentifier(stub.name)) {
-									typeDefinitions.push(stub.name.text)
+									identifiers.push(stub.name.text)
 								}
 							}
 
-						} else if (node.name) {
-							typeDefinitions.push(node.name.text)
+						} else if (node.name?.text) {
+							identifiers.push(node.name.text)
 						}
 					})
 				})
+
+			} else {
+				const exportedIdentifiers = await getExportedIdentifiers(codeTree)
+				for (const [name] of exportedIdentifiers) {
+					if (name === '*default') {
+						continue
+					}
+
+					identifiers.push(name)
+				}
 			}
 
-			return _.chain(typeDefinitions).compact().uniq().sortBy().value()
-
 		} catch (error) {
-			return []
+			console.error(error)
 		}
+
+		return _.chain(identifiers).compact().uniq().sortBy().value()
 	}
 }
 
@@ -1610,7 +1624,7 @@ async function getImportOrRequireSnippet(syntax: 'import' | 'require' | 'infer',
 
 type FilePath = string
 type IdentifierName = string
-interface IdentifierMap extends Map<IdentifierName, { originalName?: string, sourceText: string, pathList: Array<string> }> { }
+interface IdentifierMap extends Map<IdentifierName, { originalName?: string, sourceText: string, sourceKind?: ts.SyntaxKind, pathList: Array<string> }> { }
 
 function δ(name: string) {
 	return name === 'default' ? '*default' : name
@@ -1643,11 +1657,56 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 	}
 
 	const fileDirectory = fp.dirname(filePath)
-	const fileExtension = _.trimStart(fp.extname(filePath), '.')
+	const fileExtension = /\.d\.ts$/.test(filePath) ? 'd.ts' : _.trimStart(fp.extname(filePath), '.')
 
-	const importedNames: IdentifierMap = new Map()
+	const localNames: IdentifierMap = new Map()
+
+	const φ = (node: ts.BindingName, text: string) => {
+		if (ts.isIdentifier(node)) {
+			localNames.set(node.text, {
+				sourceText: text,
+				pathList: [filePath],
+			})
+
+		} else if (ts.isObjectBindingPattern(node)) {
+			for (const stub of node.elements) {
+				φ(stub.name, text)
+			}
+
+		} else if (ts.isArrayBindingPattern(node)) {
+			for (const stub of node.elements) {
+				if (ts.isBindingElement(stub)) {
+					φ(stub.name, text)
+				}
+			}
+		}
+	}
 
 	try {
+		for (const node of codeTree.statements) {
+			if (
+				(
+					ts.isFunctionDeclaration(node) ||
+					ts.isClassDeclaration(node) ||
+					ts.isEnumDeclaration(node) ||
+					ts.isInterfaceDeclaration(node) ||
+					ts.isTypeAliasDeclaration(node)
+				) &&
+				node.name?.text
+			) {
+				localNames.set(node.name.text, {
+					sourceText: node.getText(),
+					sourceKind: node.kind,
+					pathList: [],
+				})
+
+			} else if (ts.isVariableStatement(node)) {
+				for (const stub of node.declarationList.declarations) {
+					φ(stub.name, stub.getText())
+				}
+			}
+		}
+
 		for (const node of codeTree.statements) {
 			if (ts.isImportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) && node.importClause) {
 				if (/^[./]/.test(node.moduleSpecifier.text) === false) {
@@ -1665,10 +1724,11 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 					// Example:
 					// import named from "path"
 					if (transitIdentifiers.has('*default')) {
-						const { sourceText, pathList } = transitIdentifiers.get('*default')
-						importedNames.set(node.importClause.name.text, {
+						const { sourceText, sourceKind, pathList } = transitIdentifiers.get('*default')
+						localNames.set(node.importClause.name.text, {
 							originalName: '*default',
 							sourceText,
+							sourceKind,
 							pathList: [path, ...pathList],
 						})
 					}
@@ -1681,10 +1741,11 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 						for (const stub of node.importClause.namedBindings.elements) {
 							const name = stub.name.text
 							if (transitIdentifiers.has(name)) {
-								const { sourceText, pathList } = transitIdentifiers.get(name)
-								importedNames.set(name, {
+								const { sourceText, sourceKind, pathList } = transitIdentifiers.get(name)
+								localNames.set(name, {
 									originalName: name,
 									sourceText,
+									sourceKind,
 									pathList: [path, ...pathList],
 								})
 							}
@@ -1694,7 +1755,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 						// Example:
 						// import * as namespace from "path"
 						// TODO: find the correct text by tracing `Namespace.Named`
-						importedNames.set(node.importClause.namedBindings.name.text, {
+						localNames.set(node.importClause.namedBindings.name.text, {
 							sourceText: node.getText(),
 							pathList: [path],
 						})
@@ -1713,43 +1774,47 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 							if (stub.propertyName && transitIdentifiers.has(δ(stub.propertyName.text))) {
 								// Example:
 								// export { named as exported } from "path"
-								const { originalName, sourceText, pathList } = transitIdentifiers.get(δ(stub.propertyName.text))
+								const { originalName, sourceText, sourceKind, pathList } = transitIdentifiers.get(δ(stub.propertyName.text))
 								exportedNames.set(name, {
 									originalName,
 									sourceText,
+									sourceKind,
 									pathList: [filePath, path, ...pathList],
 								})
 
 							} else if (transitIdentifiers.has(name)) {
 								// Example:
 								// export { named } from "path"
-								const { originalName, sourceText, pathList } = transitIdentifiers.get(name)
+								const { originalName, sourceText, sourceKind, pathList } = transitIdentifiers.get(name)
 								exportedNames.set(name, {
 									originalName,
 									sourceText,
+									sourceKind,
 									pathList: [filePath, path, ...pathList],
 								})
 							}
 
 						} else {
-							if (stub.propertyName && importedNames.has(stub.propertyName.text)) {
+							if (stub.propertyName && localNames.has(stub.propertyName.text)) {
 								// Example:
 								// export { named as exported }
-								const { originalName, sourceText, pathList } = importedNames.get(stub.propertyName.text)
+								const { originalName, sourceText, sourceKind, pathList } = localNames.get(stub.propertyName.text)
 								exportedNames.set(name, {
 									originalName,
 									sourceText,
+									sourceKind,
 									pathList: [filePath, ...pathList],
 								})
 
-							} else if (importedNames.has(name)) {
+							} else if (localNames.has(name)) {
 								// Example:
 								// import named from "path"
 								// export { named }
-								const { originalName, sourceText, pathList } = importedNames.get(name)
+								const { originalName, sourceText, sourceKind, pathList } = localNames.get(name)
 								exportedNames.set(name, {
 									originalName,
 									sourceText,
+									sourceKind,
 									pathList: [filePath, ...pathList],
 								})
 
@@ -1770,10 +1835,11 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 					// Example:
 					// export * from "path"
 					const transitIdentifiers = await getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
-					transitIdentifiers.forEach(({ originalName, sourceText, pathList }, name) => {
+					transitIdentifiers.forEach(({ originalName, sourceText, sourceKind, pathList }, name) => {
 						exportedNames.set(name, {
 							originalName,
 							sourceText,
+							sourceKind,
 							pathList: [filePath, ...pathList],
 						})
 					})
@@ -1784,11 +1850,12 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 					// Example:
 					// export default named
 					const name = node.expression.text
-					if (importedNames.has(name)) {
-						const { originalName, sourceText, pathList } = importedNames.get(name)
+					if (localNames.has(name)) {
+						const { originalName, sourceText, sourceKind, pathList } = localNames.get(name)
 						exportedNames.set('*default', {
 							originalName,
 							sourceText,
+							sourceKind,
 							pathList: [filePath, ...pathList],
 						})
 
@@ -1805,12 +1872,13 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 					// export default {}
 					exportedNames.set('*default', {
 						sourceText: node.getText(),
+						sourceKind: node.expression.kind,
 						pathList: [filePath],
 					})
 				}
 
 			} else if (
-				(ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isEnumDeclaration(node)) &&
+				(ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isEnumDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) &&
 				node.modifiers && node.modifiers.length > 0 && node.modifiers[0].kind === ts.SyntaxKind.ExportKeyword
 			) {
 				if (node.modifiers.length > 1 && node.modifiers[1].kind === ts.SyntaxKind.DefaultKeyword) {
@@ -1821,12 +1889,14 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 						exportedNames.set('*default', {
 							originalName: node.name.text,
 							sourceText: node.getText(),
+							sourceKind: node.kind,
 							pathList: [filePath],
 						})
 
 					} else {
 						exportedNames.set('*default', {
 							sourceText: node.getText(),
+							sourceKind: node.kind,
 							pathList: [filePath],
 						})
 					}
@@ -1841,6 +1911,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 					exportedNames.set(node.name.text, {
 						originalName: node.name.text,
 						sourceText: node.getText(),
+						sourceKind: node.kind,
 						pathList: [filePath],
 					})
 				}
@@ -1851,15 +1922,26 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 			) {
 				// Example:
 				// export const named = ...
-				node.declarationList.declarations.forEach(stub => {
+				for (const stub of node.declarationList.declarations) {
 					if (ts.isIdentifier(stub.name)) {
-						exportedNames.set(stub.name.text, {
-							originalName: stub.name.text,
-							sourceText: node.getText(),
-							pathList: [filePath],
-						})
+						if (ts.isIdentifier(stub.initializer) && localNames.has(stub.initializer.text)) {
+							const { originalName, sourceKind, pathList } = localNames.get(stub.initializer.text)
+							exportedNames.set(stub.name.text, {
+								originalName,
+								sourceText: node.getText(),
+								sourceKind,
+								pathList: [filePath, ...pathList],
+							})
+
+						} else {
+							exportedNames.set(stub.name.text, {
+								originalName: stub.name.text,
+								sourceText: node.getText(),
+								pathList: [filePath],
+							})
+						}
 					}
-				})
+				}
 
 			} else if (
 				ts.isExpressionStatement(node) &&
@@ -1871,11 +1953,12 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 				// module.exports = ...
 				if (ts.isIdentifier(node.expression.right)) {
 					const name = node.expression.right.text
-					if (importedNames.has(name)) {
-						const { originalName, sourceText, pathList } = importedNames.get(name)
+					if (localNames.has(name)) {
+						const { originalName, sourceText, sourceKind, pathList } = localNames.get(name)
 						exportedNames.set('*default', {
 							originalName,
 							sourceText,
+							sourceKind,
 							pathList: [filePath, ...pathList],
 						})
 
@@ -1890,6 +1973,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 				} else {
 					exportedNames.set('*default', {
 						sourceText: node.getText(),
+						sourceKind: node.expression.right.kind,
 						pathList: [filePath],
 					})
 				}
@@ -1908,11 +1992,12 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 				// module.exports.named = ...
 				if (ts.isIdentifier(node.expression.right)) {
 					const name = node.expression.right.text
-					if (importedNames.has(name)) {
-						const { originalName, sourceText, pathList } = importedNames.get(name)
+					if (localNames.has(name)) {
+						const { originalName, sourceText, sourceKind, pathList } = localNames.get(name)
 						exportedNames.set(node.expression.left.name.text, {
 							originalName,
 							sourceText,
+							sourceKind,
 							pathList: [filePath, ...pathList],
 						})
 
@@ -1927,6 +2012,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 				} else {
 					exportedNames.set(node.expression.left.name.text, {
 						sourceText: node.getText(),
+						sourceKind: node.expression.right.kind,
 						pathList: [filePath],
 					})
 				}
