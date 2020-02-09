@@ -528,10 +528,11 @@ export default class JavaScript implements Language {
 		const jsExtension = /jsx?$/i
 
 		// Presume the input pattern is written in POSIX style
-		const inclusionList = tsconfig?.include?.map(pattern =>
-			new Minimatch(fp.posix.resolve(getPosixPath(fp.dirname(tsconfig.filePath)), pattern)))
-		const exclusionList = tsconfig?.exclude?.map(pattern =>
-			new Minimatch(fp.posix.resolve(getPosixPath(fp.dirname(tsconfig.filePath)), pattern)))
+		const [inclusionList, exclusionList]: Array<Array<(path: string) => boolean>> = [tsconfig?.include, tsconfig?.exclude].map((patterns = []) => patterns.map(relativePattern => {
+			const fullPattern = fp.posix.resolve(getPosixPath(fp.dirname(tsconfig.filePath)), relativePattern)
+			const globPattern = new Minimatch(fullPattern)
+			return path => path === fullPattern || path.startsWith(fullPattern + fp.posix.sep) || globPattern.match(path)
+		}))
 
 		return (fileInfo: FileInfo) => {
 			if (targetMatcher && fileInfo.fullPathForPOSIX.startsWith(rootPath + fp.posix.sep) && targetMatcher.test(fileInfo.fullPathForPOSIX.substring(rootPath.length + 1)) === false) {
@@ -542,11 +543,11 @@ export default class JavaScript implements Language {
 				return false
 			}
 
-			if (inclusionList && inclusionList.every(pattern => !pattern.match(fileInfo.fullPathForPOSIX))) {
+			if (inclusionList.every(match => !match(fileInfo.fullPathForPOSIX))) {
 				return false
 			}
 
-			if (exclusionList && exclusionList.some(pattern => pattern.match(fileInfo.fullPathForPOSIX))) {
+			if (exclusionList.some(match => match(fileInfo.fullPathForPOSIX))) {
 				return false
 			}
 
