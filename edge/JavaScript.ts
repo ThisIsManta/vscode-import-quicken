@@ -543,11 +543,11 @@ export default class JavaScript implements Language {
 				return false
 			}
 
-			if (inclusionList.every(match => !match(fileInfo.fullPathForPOSIX))) {
+			if (inclusionList.length > 0 && inclusionList.every(match => !match(fileInfo.fullPathForPOSIX))) {
 				return false
 			}
 
-			if (exclusionList.some(match => match(fileInfo.fullPathForPOSIX))) {
+			if (exclusionList.length > 0 && exclusionList.some(match => match(fileInfo.fullPathForPOSIX))) {
 				return false
 			}
 

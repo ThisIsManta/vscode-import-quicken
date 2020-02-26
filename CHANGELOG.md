@@ -1,3 +1,6 @@
+## 1.5.2
+- Fix wrongly interpret `include` and `exclude` in tsconfig.json.
+
 ## 1.5.1
 - Improve time performance by internally merging TypeScript into JavaScript.
 - Improve import generation recognition.
