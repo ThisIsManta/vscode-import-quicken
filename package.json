@@ -99,8 +99,8 @@
 		"@types/glob": "^7.1.1",
 		"@types/lodash": "^4.14.149",
 		"@types/mz": "0.0.32",
-		"@types/node": "^12.0.0",
-		"high-standard": "^1.7.0",
+		"@types/node": "^13.8.0",
+		"high-standard": "^2.1.2",
 		"vscode": "^1.1.36"
 	},
 	"dependencies": {
@@ -108,6 +108,6 @@
 		"lodash": "^4.17.15",
 		"mz": "^2.7.0",
 		"stylus": "^0.54.7",
-		"typescript": "^3.7.4"
+		"typescript": "^3.8.3"
 	}
 }
