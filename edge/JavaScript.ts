@@ -1210,10 +1210,7 @@ class NodeModuleItem implements Item {
 			kind = preselected.kind
 			name = preselected.name
 
-		} else if (
-			identifiers.length === 0 ||
-			(language.defaultImportCache.has(this.name) || language.namespaceImportCache.has(this.name)) && language.nodeIdentifierCache.get(packageJsonPath)?.filter(item => item.name === this.name && item.kind === 'named').length === 0
-		) {
+		} else if (identifiers.length === 0 && language.nodeIdentifierCache.get(packageJsonPath)?.find(item => item.name === this.name && item.kind === 'named') === undefined) {
 			if (importDefaultIsPreferred) {
 				kind = 'default'
 				name = language.defaultImportCache.get(this.name) || autoName
@@ -1307,49 +1304,35 @@ class NodeModuleItem implements Item {
 		const identifiers: Array<string> = []
 		try {
 			const codeTree = await JavaScript.parse(declarationPath)
+			const nodeList = await getOriginalAndReferencedTopLevelStatements(codeTree)
 
-			let globallyExportedIdentifier: string = null
-			for (const node of codeTree.statements) {
-				if (ts.isModuleDeclaration(node) && node.name.text === this.name && node.body && ts.isModuleBlock(node.body)) {
-					// Find `declare module '???' { ... }` where ??? is the module name
-					node.body.forEachChild(node => {
-						if (node.modifiers && node.modifiers.some(node => node.kind === ts.SyntaxKind.ExportKeyword) && (node as any).name) {
-							// Gather all `export` members
-							identifiers.push((node as any).name.text)
-						}
-					})
-
-				} else if (ts.isNamespaceExportDeclaration(node)) {
-					// Find `export as namespace ???`
-					globallyExportedIdentifier = node.name.text
+			// Find `declare module '???' { ... }` where ??? is the module name
+			for (const node of await getDeclarationIdentifiersFromReference(nodeList, [this.name], codeTree.fileName)) {
+				if (node.modifiers && node.modifiers.some(node => node.kind === ts.SyntaxKind.ExportKeyword) && (node as any).name) {
+					// Gather all `export` members
+					identifiers.push((node as any).name.text)
 				}
 			}
 
-			if (globallyExportedIdentifier) {
-				// Gather all members inside `declare namespace ??? { ... }`
-				findNodesRecursively<ts.ModuleDeclaration>(codeTree, node => (
-					ts.isModuleDeclaration(node) &&
-					node.modifiers &&
-					node.modifiers.some(node => node.kind === ts.SyntaxKind.DeclareKeyword) &&
-					node.name.text === globallyExportedIdentifier &&
-					node.body &&
-					ts.isModuleBlock(node.body)
-				)).forEach(({ body }) => {
-					body.forEachChild((node: any) => {
-						if (ts.isVariableStatement(node)) {
-							for (const stub of node.declarationList.declarations) {
-								if (ts.isVariableDeclaration(stub) && ts.isIdentifier(stub.name)) {
-									identifiers.push(stub.name.text)
-								}
+			const exportedNamespace = codeTree.statements.find(ts.isNamespaceExportDeclaration)?.name.text
+			if (exportedNamespace) {
+				// Find `export as namespace ???`
+				const reference = getFinalDeclarationReference(nodeList, [exportedNamespace])
+				for (const node of await getDeclarationIdentifiersFromReference(nodeList, reference, codeTree.fileName)) {
+					if (ts.isVariableStatement(node)) {
+						for (const stub of node.declarationList.declarations) {
+							if (ts.isVariableDeclaration(stub) && ts.isIdentifier(stub.name)) {
+								identifiers.push(stub.name.text)
 							}
-
-						} else if (node.name?.text) {
-							identifiers.push(node.name.text)
 						}
-					})
-				})
 
-			} else {
+					} else {
+						identifiers.push((node as any).name?.text)
+					}
+				}
+			}
+
+			if (!exportedNamespace) {
 				const exportedIdentifiers = await getExportedIdentifiers(codeTree)
 				for (const [name] of exportedIdentifiers) {
 					if (name === '*default') {
@@ -1366,6 +1349,99 @@ class NodeModuleItem implements Item {
 
 		return _.chain(identifiers).compact().uniq().sortBy().value()
 	}
+}
+
+function getFinalDeclarationReference(nodeList: ReadonlyArray<ts.Statement>, name: Array<string>, visitedNodes = new Set<ts.Node>()): Array<string> {
+	const getNamedPaths = (β: ts.QualifiedName): Array<string> => {
+		if (ts.isQualifiedName(β.left)) {
+			return [...getNamedPaths(β.left), β.right.text]
+		}
+
+		return [β.left.text, β.right.text]
+	}
+
+	if (name.length > 1) {
+		return name
+	}
+
+	for (const node of nodeList) {
+		if (visitedNodes.has(node)) {
+			continue
+		}
+
+		visitedNodes.add(node)
+
+		// Find `declare const A: B.C`
+		if (
+			ts.isVariableStatement(node) &&
+			node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.DeclareKeyword) &&
+			ts.isVariableDeclarationList(node.declarationList)
+		) {
+			for (const stub of node.declarationList.declarations) {
+				if (
+					ts.isIdentifier(stub.name) &&
+					stub.name.text === name[0] &&
+					stub.initializer === undefined &&
+					stub.type &&
+					ts.isTypeReferenceNode(stub.type)
+				) {
+					if (ts.isIdentifier(stub.type.typeName)) {
+						return getFinalDeclarationReference(nodeList, [stub.type.typeName.text], visitedNodes)
+
+					} else if (ts.isQualifiedName(stub.type.typeName)) {
+						return getFinalDeclarationReference(nodeList, getNamedPaths(stub.type.typeName), visitedNodes)
+					}
+				}
+			}
+		}
+	}
+
+	return name
+}
+
+async function getDeclarationIdentifiersFromReference(nodeList: ReadonlyArray<ts.Statement>, reference: Array<string>, originalFilePath: string) {
+	const output: Array<ts.Node> = []
+
+	const namespaces = nodeList.filter((node): node is ts.ModuleDeclaration & { body: ts.ModuleBlock } =>
+		ts.isModuleDeclaration(node) &&
+		node.modifiers?.some(node => node.kind === ts.SyntaxKind.DeclareKeyword) &&
+		node.body &&
+		ts.isModuleBlock(node.body)
+	)
+
+	for (const node of namespaces) {
+		const q = ts.isSourceFile(node.parent) && (await tryGetFullPath([fp.dirname(node.parent.fileName), node.name.text], node.parent.fileName.match(/\.([a-z.]+)$/i)?.[1]))
+		if (
+			node.parent &&
+			ts.isSourceFile(node.parent) &&
+			(
+				(
+					node.parent.fileName === originalFilePath &&
+					node.name.text === reference[0]
+				) ||
+				(
+					ts.isStringLiteral(node.name) &&
+					node.name.text.startsWith('.') &&
+					(await tryGetFullPath([fp.dirname(node.parent.fileName), node.name.text], node.parent.fileName.match(/\.([a-z.]+)$/i)?.[1])) === originalFilePath.replace(/\//g, fp.sep)
+				)
+			)
+		) {
+			if (reference.length === 1) {
+				// Gather all members inside `declare namespace ??? { ... }`
+				output.push(...node.body.statements)
+
+			} else {
+				for (const stub of node.body.statements) {
+					if (ts.isInterfaceDeclaration(stub) && stub.name.text === reference[1]) {
+						// Gather all members inside `interface ??? { ... }`
+						output.push(...stub.members)
+					}
+				}
+			}
+		}
+	}
+
+	return output
 }
 
 class NodeIdentifierItem extends NodeModuleItem {
@@ -1629,6 +1705,36 @@ interface IdentifierMap extends Map<IdentifierName, { originalName?: string, sou
 
 function δ(name: string) {
 	return name === 'default' ? '*default' : name
+}
+
+async function getOriginalAndReferencedTopLevelStatements(originalCodeTree: ts.SourceFile, processingFilePaths = new Set<string>()) {
+	const codeList: Array<ts.Statement> = []
+
+	// Prevent looping indefinitely because of a cyclic dependency
+	if (processingFilePaths.has(originalCodeTree.fileName)) {
+		return []
+
+	} else {
+		processingFilePaths.add(originalCodeTree.fileName)
+	}
+
+	for (const { fileName } of originalCodeTree.referencedFiles) {
+		const path = await tryGetFullPath([fp.dirname(originalCodeTree.fileName), fileName], 'd.ts')
+		if (!path) {
+			continue
+		}
+
+		const referencedCodeTree = await JavaScript.parse(path)
+		if (!referencedCodeTree) {
+			continue
+		}
+
+		codeList.push(...(await getOriginalAndReferencedTopLevelStatements(referencedCodeTree, processingFilePaths)))
+	}
+
+	codeList.push(...originalCodeTree.statements)
+
+	return codeList
 }
 
 async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cachedFilePaths = new Map<FilePath, IdentifierMap>(), processingFilePaths = new Set<string>()) {

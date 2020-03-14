@@ -1,3 +1,6 @@
+## 1.6.0
+- Add reading type definitions from triple-slash directives.
+
 ## 1.5.2
 - Fix wrongly interpret `include` and `exclude` in tsconfig.json.
 
