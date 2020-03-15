@@ -32,6 +32,7 @@ export default class JavaScript implements Language {
 	readonly namespaceImportCache = new Map<FilePath, string>()
 	readonly nodeModuleCache = new Map<PackageJsonPath, Array<NodeModuleItem>>()
 	readonly nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
+	readonly directModuleCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 
 	private userConfig: { javascript: JavaScriptConfiguration, typescript: JavaScriptConfiguration }
 
@@ -172,6 +173,8 @@ export default class JavaScript implements Language {
 				this.nodeIdentifierCache.set(packageJsonPath, [])
 			}
 
+			const dependencies = this.nodeModuleCache.get(packageJsonPath)
+
 			const nodeIdentifierItems = this.nodeIdentifierCache.get(packageJsonPath)
 			for (const { identifier, path, kind } of importedIdentifiers) {
 				if (path.startsWith('.') || path.startsWith('!')) {
@@ -183,6 +186,13 @@ export default class JavaScript implements Language {
 				}
 
 				if (nodeIdentifierItems.some(item => item.identifier === identifier && item.name === path)) {
+					continue
+				}
+
+				const nodeModule = dependencies.find(dependency => path.startsWith(dependency.name + '/'))
+				if (nodeModule && identifier === _.last(path.split('/'))) {
+					// Populate direct-module files instead
+					nodeModule.directImportIsPreferred = true
 					continue
 				}
 
@@ -281,15 +291,11 @@ export default class JavaScript implements Language {
 					}
 				}
 
-				for (const { packageJsonPath } of packageJsonList) {
-					if (this.nodeIdentifierCache.has(packageJsonPath) && this.nodeModuleCache.has(packageJsonPath)) {
-						const dependencyNameList = this.nodeModuleCache.get(packageJsonPath).map(item => item.name)
-						const nodeIdentifiers = _.chain(this.nodeIdentifierCache.get(packageJsonPath))
-							.filter(item => dependencyNameList.includes(item.name))
-							.sortBy(item => item.name.toLowerCase(), item => item.identifier.toLowerCase())
-							.value()
-						this.nodeIdentifierCache.set(packageJsonPath, nodeIdentifiers)
-					}
+				for (const [packageJsonPath, identifiers] of this.nodeIdentifierCache) {
+					this.nodeIdentifierCache.set(packageJsonPath, _.sortBy(identifiers,
+						item => item.name.toLowerCase(),
+						item => item.identifier.toLowerCase())
+					)
 				}
 
 				this.workingThread = null
@@ -760,19 +766,8 @@ class FileItem implements Item {
 
 	async getRelativePath(document: vscode.TextDocument, importPattern: ImportPattern) {
 		const directoryPath = new FileInfo(document.fileName).directoryPath
-		const path = this.info.getRelativePath(directoryPath)
-
-		// Remove "/index.js" from the path
-		if (INDEX_FILE_PATTERN.test(this.info.fullPathForPOSIX) && importPattern.indexFile.hidden > importPattern.indexFile.visible) {
-			return fp.dirname(path)
-		}
-
-		// Remove file extension from the path
-		if (importPattern.fileExtensionExclusion.has(this.info.fileExtensionWithoutLeadingDot)) {
-			return path.replace(new RegExp(_.escapeRegExp(fp.extname(this.info.fileNameWithExtension)) + '$'), '')
-		}
-
-		return path
+		const relativePath = this.info.getRelativePath(directoryPath)
+		return normalizeImportPath(relativePath, this.info, importPattern)
 	}
 }
 
@@ -1093,6 +1088,8 @@ class NodeModuleItem implements Item {
 	readonly name: string
 	label: string
 	description: string
+	directImportIsPreferred = false
+	directImportCache: { modulePath: string, items: Array<vscode.QuickPickItem> } = null
 
 	protected importPattern: ImportPattern
 
@@ -1118,8 +1115,12 @@ class NodeModuleItem implements Item {
 		const packageJsonList = await language.getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
 
-		const importDefaultIsPreferred = language.checkIfImportDefaultIsPreferredOverNamespace(document)
-		const identifiers = await this.getDeclarationIdentifiers(document, packageJsonList)
+		const defaultImportIsPreferred = language.checkIfImportDefaultIsPreferredOverNamespace(document)
+
+		const getTypeDeclarations = _.once(async () => {
+			const declarationPath = await this.getDeclarationPath(document, packageJsonList)
+			return this.getDeclarationIdentifiers(declarationPath)
+		})
 
 		const codeTree = await JavaScript.parse(document)
 		if (!codeTree) {
@@ -1132,7 +1133,7 @@ class NodeModuleItem implements Item {
 		const duplicateImport = existingImports.find(item => item.path === this.name)
 		if (duplicateImport) {
 			if (
-				!preselected && identifiers.length === 0 ||
+				!preselected && (await getTypeDeclarations()).length === 0 ||
 				!ts.isImportDeclaration(duplicateImport.node) ||
 				!duplicateImport.node.importClause ||
 				(
@@ -1148,8 +1149,8 @@ class NodeModuleItem implements Item {
 			const selectedIdentifier = (
 				preselected && (preselected.kind === 'named' ? preselected.name : 'default') ||
 				await vscode.window.showQuickPick([
-					...(importDefaultIsPreferred ? ['default'] : []),
-					...identifiers,
+					...(defaultImportIsPreferred ? ['default'] : []),
+					...(await getTypeDeclarations()),
 				])
 			)
 			if (!selectedIdentifier) {
@@ -1204,14 +1205,93 @@ class NodeModuleItem implements Item {
 			}
 		}
 
+		const getImportPattern = _.once(() => {
+			if (existingImports.length > 0) {
+				const importPattern = new ImportPattern()
+				importPattern.selectiveScan(existingImports)
+				importPattern.inconclusiveScan(codeTree)
+				return importPattern
+
+			} else {
+				return this.importPattern
+			}
+		})
+
 		let kind: ImportKind = null
 		let name = autoName
+		let path = this.name
+
 		if (preselected) {
 			kind = preselected.kind
 			name = preselected.name
 
-		} else if (identifiers.length === 0 && language.nodeIdentifierCache.get(packageJsonPath)?.find(item => item.name === this.name && item.kind === 'named') === undefined) {
-			if (importDefaultIsPreferred) {
+		} else if (this.directImportIsPreferred) {
+			const directImportResolution = (async () => {
+				// Do nothing if cache hits
+				if (this.directImportCache) {
+					return this.directImportCache
+				}
+
+				const modulePath = await this.getModulePath(document, packageJsonList)
+				if (!modulePath) {
+					throw new Error('Could not find "modulePath"')
+				}
+
+				const files = await new Promise<Array<string>>((resolve, reject) => {
+					glob(fp.join('**', '*.js'), { cwd: modulePath }, (ex, files) => {
+						ex ? reject(ex) : resolve(files.filter(fileName => !fileName.startsWith('_')))
+					})
+				})
+
+				this.directImportCache = {
+					modulePath,
+					items: files.map(file => ({ label: file })),
+				}
+
+				return this.directImportCache
+			})()
+
+			await new Promise((resolve, reject) => {
+				let accepted = false
+				const picker = vscode.window.createQuickPick()
+				picker.placeholder = this.name
+				picker.busy = true
+				picker.onDidAccept(async () => {
+					const [select] = picker.selectedItems
+					accepted = !!select
+					picker.dispose()
+
+					if (!select) {
+						return
+					}
+
+					const { modulePath } = await directImportResolution
+					const file = new FileInfo(fp.join(modulePath, select.label))
+
+					kind = 'default'
+					name = JAVASCRIPT_IDENTIFIER_PATTERN.test(file.fileNameWithoutExtension) ? file.fileNameWithoutExtension : _.camelCase(file.fileNameWithoutExtension)
+					path = normalizeImportPath(this.name + '/' + select.label.replace(/\\/g, '/'), file, getImportPattern())
+
+					resolve()
+				})
+				picker.onDidHide(() => {
+					if (!accepted) {
+						reject(new Error('Aborted by the user'))
+					}
+				})
+				picker.show()
+
+				directImportResolution.then(({ items }) => {
+					picker.items = items
+					picker.busy = false
+				})
+			})
+
+		} else if (
+			(await getTypeDeclarations()).length === 0 &&
+			language.nodeIdentifierCache.get(packageJsonPath)?.find(item => item.name === this.name && item.kind === 'named') === undefined
+		) {
+			if (defaultImportIsPreferred) {
 				kind = 'default'
 				name = language.defaultImportCache.get(this.name) || autoName
 
@@ -1222,9 +1302,9 @@ class NodeModuleItem implements Item {
 
 		} else {
 			const select = await vscode.window.showQuickPick([
-				importDefaultIsPreferred ? 'default' : '*',
-				...identifiers,
-			])
+				defaultImportIsPreferred ? 'default' : '*',
+				...(await getTypeDeclarations()),
+			], { placeHolder: this.name })
 			if (!select) {
 				return null
 			}
@@ -1243,60 +1323,68 @@ class NodeModuleItem implements Item {
 			}
 		}
 
-		let importPattern = this.importPattern
-		if (existingImports.length > 0) {
-			importPattern = new ImportPattern()
-			importPattern.selectiveScan(existingImports)
-			importPattern.inconclusiveScan(codeTree)
-		}
-
-		const snippet = await getImportOrRequireSnippet('infer', kind, name, this.name, document, importPattern)
-		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, this.name, document), snippet))
+		const snippet = await getImportOrRequireSnippet('infer', kind, name, path, document, getImportPattern())
+		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
 		await JavaScript.fixESLint()
 		setImportNameToClipboard(name)
+	}
+
+	private async getModulePath(document: vscode.TextDocument, packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }>) {
+		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
+		if (!packageJson || !packageJson.nodeModulePathList) {
+			return
+		}
+
+		// Traverse through the deepest `node_modules` first
+		for (const rootPath of _.sortBy(packageJson.nodeModulePathList).reverse()) {
+			const modulePath = fp.join(rootPath, 'node_modules', this.name)
+			if (await fs.exists(modulePath) && (await fs.lstat(modulePath)).isDirectory()) {
+				return modulePath
+			}
+		}
+	}
+
+	private async getDeclarationPath(document: vscode.TextDocument, packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }>) {
+		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
+		if (!packageJson || !packageJson.nodeModulePathList) {
+			return
+		}
+
+		// Traverse through the deepest `node_modules` first
+		for (const rootPath of _.sortBy(packageJson.nodeModulePathList).reverse()) {
+			const indexDeclarationPath = fp.join(rootPath, 'node_modules', this.name, 'index.d.ts')
+			if (await fs.exists(indexDeclarationPath)) {
+				return indexDeclarationPath
+			}
+
+			const packageJsonPath = fp.join(rootPath, 'node_modules', this.name, 'package.json')
+			if (await fs.exists(packageJsonPath)) {
+				try {
+					const { types, typings } = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+					const mainDeclarationPath = types ?? typings
+					if (_.isString(mainDeclarationPath)) {
+						const typeDeclarationPath = fp.resolve(rootPath, 'node_modules', this.name, mainDeclarationPath.replace(/\//g, fp.sep))
+						if (await fs.exists(typeDeclarationPath)) {
+							return typeDeclarationPath
+						}
+					}
+
+				} catch (error) {
+					// Do nothing
+				}
+			}
+
+			const definitelyTypedPath = fp.join(rootPath, 'node_modules', '@types/' + this.name, 'index.d.ts')
+			if (await fs.exists(definitelyTypedPath)) {
+				return definitelyTypedPath
+			}
+		}
 	}
 
 	/**
 	 * @see https://www.typescriptlang.org/docs/handbook/declaration-files/publishing.html
 	 */
-	private async getDeclarationIdentifiers(document: vscode.TextDocument, packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }>) {
-		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
-		if (!packageJson || !packageJson.nodeModulePathList) {
-			return []
-		}
-
-		const declarationPath = await (async () => {
-			// Traverse through the deepest `node_modules` first
-			for (const rootPath of _.sortBy(packageJson.nodeModulePathList).reverse()) {
-				const indexDeclarationPath = fp.join(rootPath, 'node_modules', this.name, 'index.d.ts')
-				if (await fs.exists(indexDeclarationPath)) {
-					return indexDeclarationPath
-				}
-
-				const packageJsonPath = fp.join(rootPath, 'node_modules', this.name, 'package.json')
-				if (await fs.exists(packageJsonPath)) {
-					try {
-						const { types, typings } = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-						const mainDeclarationPath = types ?? typings
-						if (_.isString(mainDeclarationPath)) {
-							const typeDeclarationPath = fp.resolve(rootPath, 'node_modules', this.name, mainDeclarationPath.replace(/\//g, fp.sep))
-							if (await fs.exists(typeDeclarationPath)) {
-								return typeDeclarationPath
-							}
-						}
-
-					} catch (error) {
-						// Do nothing
-					}
-				}
-
-				const definitelyTypedPath = fp.join(rootPath, 'node_modules', '@types/' + this.name, 'index.d.ts')
-				if (await fs.exists(definitelyTypedPath)) {
-					return definitelyTypedPath
-				}
-			}
-		})()
-
+	private getDeclarationIdentifiers = _.memoize(async (declarationPath: string | undefined) => {
 		if (!declarationPath) {
 			return []
 		}
@@ -1348,7 +1436,7 @@ class NodeModuleItem implements Item {
 		}
 
 		return _.chain(identifiers).compact().uniq().sortBy().value()
-	}
+	})
 }
 
 function getFinalDeclarationReference(nodeList: ReadonlyArray<ts.Statement>, name: Array<string>, visitedNodes = new Set<ts.Node>()): Array<string> {
@@ -1470,7 +1558,7 @@ class NodeIdentifierItem extends NodeModuleItem {
 }
 
 class ImportPattern {
-	fileExtensionExclusion = new Set<string>()
+	fileExtensionExclusion = new Set<string>(['js', 'jsx', 'ts', 'tsx'])
 
 	syntax = {
 		imports: 0,
@@ -1523,8 +1611,14 @@ class ImportPattern {
 						this.indexFile.hidden += 1
 					}
 
-				} else if (path.endsWith(fileExtensionWithLeadingDot) === false) {
-					this.fileExtensionExclusion.add(fileExtensionWithLeadingDot.replace(/^\./, ''))
+				} else {
+					const fileExtensionWithoutLeadingDot = fileExtensionWithLeadingDot.replace(/^\./, '')
+					if (path.endsWith(fileExtensionWithLeadingDot)) {
+						this.fileExtensionExclusion.delete(fileExtensionWithoutLeadingDot)
+
+					} else {
+						this.fileExtensionExclusion.add(fileExtensionWithoutLeadingDot)
+					}
 				}
 			}
 		}
@@ -1873,7 +1967,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 				const path = node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) &&
 					await tryGetFullPath([fileDirectory, node.moduleSpecifier.text], fileExtension)
 
-				if (node.exportClause) {
+				if (node.exportClause && ts.isNamedExports(node.exportClause)) {
 					for (const stub of node.exportClause.elements) {
 						const name = stub.name.text
 						if (path) {
@@ -2330,4 +2424,18 @@ async function checkYarnWorkspace(packageJsonPath: string, yarnLockPath: string)
 	}
 
 	return false
+}
+
+function normalizeImportPath(relativePath: string, fileInfo: FileInfo, importPattern: ImportPattern) {
+	// Remove "/index.js" from the path
+	if (INDEX_FILE_PATTERN.test(fileInfo.fullPathForPOSIX) && importPattern.indexFile.hidden > importPattern.indexFile.visible) {
+		return fp.dirname(relativePath)
+	}
+
+	// Remove file extension from the path
+	if (importPattern.fileExtensionExclusion.has(fileInfo.fileExtensionWithoutLeadingDot)) {
+		return relativePath.replace(new RegExp(_.escapeRegExp(fp.extname(fileInfo.fileNameWithExtension)) + '$'), '')
+	}
+
+	return relativePath
 }
