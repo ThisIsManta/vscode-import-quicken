@@ -5,7 +5,7 @@ import { Parser, nodes as Nodes } from 'stylus'
 import * as vscode from 'vscode'
 
 import FileInfo from './FileInfo'
-import { ExtensionConfiguration, Language, Item, findFilesRoughly, tryGetFullPath } from './global'
+import { Language, Item, findFilesRoughly, tryGetFullPath } from './global'
 
 const SUPPORTED_LANGUAGE = /^stylus$/
 
@@ -20,7 +20,7 @@ let semiColonCount = 0
 export default class Stylus implements Language {
 	private fileItemCache: Array<FileItem> = []
 
-	setUserConfiguration(config: ExtensionConfiguration) { }
+	setUserConfiguration() { }
 
 	async setItems() {
 		const fileLinks = await vscode.workspace.findFiles('**/*.{styl,css,jpg,jpeg,png,gif,svg,otf,ttf,woff,woff2,eot}')

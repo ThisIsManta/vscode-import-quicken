@@ -1502,7 +1502,6 @@ async function getDeclarationIdentifiersFromReference(nodeList: ReadonlyArray<ts
 	)
 
 	for (const node of namespaces) {
-		const q = ts.isSourceFile(node.parent) && (await tryGetFullPath([fp.dirname(node.parent.fileName), node.name.text], node.parent.fileName.match(/\.([a-z.]+)$/i)?.[1]))
 		if (
 			node.parent &&
 			ts.isSourceFile(node.parent) &&
