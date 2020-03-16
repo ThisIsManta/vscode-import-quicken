@@ -70,7 +70,10 @@ export async function findFilesRoughly(filePath: string, fileExtensions?: Array<
 
 export async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, defaultExtensions = ['tsx', 'ts', 'jsx', 'js'], fullPathCache?: { [fullPath: string]: boolean }): Promise<string> {
 	const fullPath = fp.resolve(...pathList)
-	const possibleExtensions = _.uniq([preferredExtension.toLowerCase(), ...defaultExtensions])
+	const possibleExtensions = _.chain([preferredExtension.toLowerCase(), ...defaultExtensions])
+		.map(extension => extension.replace(/^\./, ''))
+		.uniq()
+		.value()
 
 	if (fullPathCache) {
 		if (fp.extname(fullPath) && fullPathCache[fullPath]) {

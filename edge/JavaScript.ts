@@ -666,7 +666,7 @@ export default class JavaScript implements Language {
 				// Check if it should write `import * as...` instead of `import default`
 				if (moduleName.startsWith('{') === false && document.isUntitled === false && vscode.workspace.getWorkspaceFolder(document.uri)) {
 					if (modulePath.startsWith('.')) {
-						const fullPath = await tryGetFullPath([fp.dirname(document.fileName), modulePath], _.trimStart(fp.extname(document.fileName), '.'))
+						const fullPath = await tryGetFullPath([fp.dirname(document.fileName), modulePath], fp.extname(document.fileName))
 						if (fullPath === undefined) {
 							continue
 						}
@@ -1141,7 +1141,7 @@ class NodeModuleItem implements Item {
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
 
 		const getTypeDeclarations = _.once(async () => {
-			const declarationPath = await this.getDeclarationPath(document, packageJsonList)
+			const declarationPath = await getDeclarationPath(this.name, document, packageJsonList)
 			return this.getDeclarationIdentifiers(declarationPath)
 		})
 
@@ -1345,43 +1345,6 @@ class NodeModuleItem implements Item {
 		}
 	}
 
-	private async getDeclarationPath(document: vscode.TextDocument, packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }>) {
-		const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
-		if (!packageJson || !packageJson.nodeModulePathList) {
-			return
-		}
-
-		// Traverse through the deepest `node_modules` first
-		for (const rootPath of _.sortBy(packageJson.nodeModulePathList).reverse()) {
-			const indexDeclarationPath = fp.join(rootPath, 'node_modules', this.name, 'index.d.ts')
-			if (await fs.exists(indexDeclarationPath)) {
-				return indexDeclarationPath
-			}
-
-			const packageJsonPath = fp.join(rootPath, 'node_modules', this.name, 'package.json')
-			if (await fs.exists(packageJsonPath)) {
-				try {
-					const { types, typings } = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
-					const mainDeclarationPath = types ?? typings
-					if (_.isString(mainDeclarationPath)) {
-						const typeDeclarationPath = fp.resolve(rootPath, 'node_modules', this.name, mainDeclarationPath.replace(/\//g, fp.sep))
-						if (await fs.exists(typeDeclarationPath)) {
-							return typeDeclarationPath
-						}
-					}
-
-				} catch (error) {
-					// Do nothing
-				}
-			}
-
-			const definitelyTypedPath = fp.join(rootPath, 'node_modules', '@types/' + this.name, 'index.d.ts')
-			if (await fs.exists(definitelyTypedPath)) {
-				return definitelyTypedPath
-			}
-		}
-	}
-
 	/**
 	 * @see https://www.typescriptlang.org/docs/handbook/declaration-files/publishing.html
 	 */
@@ -1513,7 +1476,7 @@ async function getDeclarationIdentifiersFromReference(nodeList: ReadonlyArray<ts
 				(
 					ts.isStringLiteral(node.name) &&
 					node.name.text.startsWith('.') &&
-					(await tryGetFullPath([fp.dirname(node.parent.fileName), node.name.text], node.parent.fileName.match(/\.([a-z.]+)$/i)?.[1])) === originalFilePath.replace(/\//g, fp.sep)
+					(await tryGetFullPath([fp.dirname(node.parent.fileName), node.name.text], getFileExtensionWithoutLeadingDot(node.parent.fileName))) === originalFilePath.replace(/\//g, fp.sep)
 				)
 			)
 		) {
@@ -1736,7 +1699,7 @@ async function getExistingImportsWithFullPath(codeTree: ts.SourceFile, fullPathC
 
 	return Promise.all(imports.map(async stub => ({
 		...stub,
-		fullPath: stub.path.startsWith('.') ? await tryGetFullPath([fp.dirname(codeTree.fileName), stub.path], fp.extname(codeTree.fileName).replace(/^\./, ''), undefined, fullPathCache) : undefined,
+		fullPath: stub.path.startsWith('.') ? await tryGetFullPath([fp.dirname(codeTree.fileName), stub.path], fp.extname(codeTree.fileName), undefined, fullPathCache) : undefined,
 	})))
 }
 
@@ -1883,7 +1846,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 	}
 
 	const fileDirectory = fp.dirname(filePath)
-	const fileExtension = /\.d\.ts$/.test(filePath) ? 'd.ts' : _.trimStart(fp.extname(filePath), '.')
+	const fileExtension = getFileExtensionWithoutLeadingDot(filePath)
 
 	const localNames: IdentifierMap = new Map()
 
@@ -2463,4 +2426,47 @@ function normalizeImportPath(relativePath: string, fileInfo: FileInfo, importPat
 	}
 
 	return relativePath
+}
+
+function getFileExtensionWithoutLeadingDot(fileName: string) {
+	if (/\.d\.ts$/.test(fileName)) {
+		return 'd.ts'
+	}
+
+	return _.trimStart(fp.extname(fileName), '.')
+}
+
+async function getDeclarationPath(moduleName: string, document: vscode.TextDocument, packageJsonList: Array<{ packageJsonPath: string, nodeModulePathList: Array<string> }>) {
+	const packageJson = getClosestPackageJson(document.fileName, packageJsonList)
+	if (!packageJson || !packageJson.nodeModulePathList) {
+		return
+	}
+
+	// Traverse through the deepest `node_modules` first
+	for (const rootPath of _.sortBy(packageJson.nodeModulePathList).reverse()) {
+		const possiblePathList = [
+			moduleName,
+			fp.join('@types', moduleName.replace(/^@/, '').replace(/\//, '__')),
+		].map(path => fp.join(rootPath, 'node_modules', path, 'package.json'))
+		for (const packageJsonPath of possiblePathList) {
+			if (await fs.exists(packageJsonPath)) {
+				try {
+					const { types, typings } = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
+					const declarationPath = types ?? typings
+					if (_.isString(declarationPath)) {
+						// Return `undefined` if not found
+						return await tryGetFullPath([fp.dirname(packageJsonPath), declarationPath.replace(/\//g, fp.sep)], 'd.ts')
+					}
+
+				} catch (error) {
+					// Do nothing
+				}
+			}
+		}
+
+		const indexDeclarationPath = fp.join(rootPath, 'node_modules', moduleName, 'index.d.ts')
+		if (await fs.exists(indexDeclarationPath)) {
+			return indexDeclarationPath
+		}
+	}
 }
