@@ -1,6 +1,7 @@
 ## 1.6.0
 - Add reading type definitions from triple-slash directives.
 - Add ability to directly import module files.
+- Fix missing exported identifiers, given `export * from 'another-node-module'`.
 
 ## 1.5.2
 - Fix wrongly interpret `include` and `exclude` in tsconfig.json.
