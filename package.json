@@ -96,18 +96,18 @@
 		"postversion": "git push --tags --quiet origin master:master"
 	},
 	"devDependencies": {
-		"@types/glob": "^7.1.1",
-		"@types/lodash": "^4.14.149",
+		"@types/glob": "^7.1.3",
+		"@types/lodash": "^4.14.160",
 		"@types/mz": "0.0.32",
-		"@types/node": "^13.8.0",
+		"@types/node": "^13.13.15",
 		"high-standard": "^2.1.2",
-		"vscode": "^1.1.36"
+		"vscode": "^1.1.37"
 	},
 	"dependencies": {
 		"glob": "^7.1.6",
-		"lodash": "^4.17.15",
+		"lodash": "^4.17.20",
 		"mz": "^2.7.0",
-		"stylus": "^0.54.7",
-		"typescript": "^3.8.3"
+		"stylus": "^0.54.8",
+		"typescript": "^3.9.7"
 	}
 }
