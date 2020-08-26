@@ -659,93 +659,47 @@ export default class JavaScript implements Language {
 			return null
 		}
 
+		const statementEnding = this.importPattern.statementEnding.semi >= this.importPattern.statementEnding.none ? ';' : ''
+		const lineEnding = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
+
 		for (const statement of Array.from(codeTree.statements).reverse()) {
 			if (!ts.isVariableStatement(statement)) {
 				continue
 			}
 
 			const importList: Array<string> = []
-			let oneOrMoreStatementsAreUnableToConvert = false
 
 			for (const node of statement.declarationList.declarations) {
-				if (!node.initializer) {
-					oneOrMoreStatementsAreUnableToConvert = true
-					break
-				}
+				const nameAndPath = await this.getRequireNameAndPath(node)
+				if (nameAndPath) {
+					let name = nameAndPath.name
+					const path = nameAndPath.path
 
-				let moduleName = node.name.getText().trim()
-
-				let modulePath: string
-				if (
-					ts.isCallExpression(node.initializer) &&
-					ts.isIdentifier(node.initializer.expression) &&
-					node.initializer.expression.text === 'require' &&
-					node.initializer.arguments.length === 1
-				) {
-					return
-
-				} else if (
-					ts.isPropertyAccessExpression(node.initializer) &&
-					ts.isCallExpression(node.initializer.expression) &&
-					ts.isIdentifier(node.initializer.expression.expression) &&
-					node.initializer.expression.expression.text === 'require' &&
-					node.initializer.expression.arguments.length === 1
-				) {
-					const [firstArgument] = node.initializer.expression.arguments
-					if (ts.isStringLiteral(firstArgument)) {
-						modulePath = firstArgument.text
-
-						const moduleSuffix = node.initializer.name.text.trim()
-						if (moduleSuffix !== 'default' && ts.isObjectBindingPattern(node.name)) {
-							if (node.name.elements.length !== 1) {
-								oneOrMoreStatementsAreUnableToConvert = true
-								break
+					// Check if it should write `import * as...` instead of `import default`
+					if (name.startsWith('{') === false && document.isUntitled === false && vscode.workspace.getWorkspaceFolder(document.uri)) {
+						if (path.startsWith('.')) {
+							const fullPath = await tryGetFullPath([fp.dirname(document.fileName), path], fp.extname(document.fileName))
+							if (fullPath === undefined) {
+								continue
 							}
 
-							const [firstName] = node.name.elements
-							if (!ts.isIdentifier(firstName)) {
-								oneOrMoreStatementsAreUnableToConvert = true
-								break
+							const identifiers = await getExportedIdentifiers(fullPath)
+							if (identifiers.has('*default') === false) {
+								name = '* as ' + name
 							}
 
-							moduleName = '{ ' + moduleSuffix + ' as ' + firstName.text.trim() + '}'
+						} else if (this.checkIfImportDefaultIsPreferredOverNamespace(document) === false) {
+							name = '* as ' + name
 						}
 					}
+
+					importList.push(`import ${name} from '${path}'`)
 				}
-
-				if (!modulePath) {
-					oneOrMoreStatementsAreUnableToConvert = true
-					break
-				}
-
-				// Check if it should write `import * as...` instead of `import default`
-				if (moduleName.startsWith('{') === false && document.isUntitled === false && vscode.workspace.getWorkspaceFolder(document.uri)) {
-					if (modulePath.startsWith('.')) {
-						const fullPath = await tryGetFullPath([fp.dirname(document.fileName), modulePath], fp.extname(document.fileName))
-						if (fullPath === undefined) {
-							continue
-						}
-
-						const identifiers = await getExportedIdentifiers(fullPath)
-						if (identifiers.has('*default') === false) {
-							moduleName = '* as ' + moduleName
-						}
-
-					} else if (this.checkIfImportDefaultIsPreferredOverNamespace(document) === false) {
-						moduleName = '* as ' + moduleName
-					}
-				}
-
-				importList.push(`import ${moduleName} from '${modulePath}'`)
 			}
 
-			if (importList.length === 0 || oneOrMoreStatementsAreUnableToConvert) {
+			if (importList.length === 0) {
 				continue
 			}
-
-			const statementEnding = this.importPattern.statementEnding.semi >= this.importPattern.statementEnding.none ? ';' : ''
-
-			const lineEnding = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
 
 			const importText = importList.join(statementEnding + lineEnding)
 			await editor.edit(worker => worker.replace(
@@ -753,6 +707,58 @@ export default class JavaScript implements Language {
 				importText
 			))
 		}
+	}
+
+	private async getRequireNameAndPath(node: ts.VariableDeclaration) {
+		if (!node.initializer) {
+			return null
+		}
+
+		if (
+			// Check for `x = require('...')`
+			ts.isCallExpression(node.initializer) &&
+			ts.isIdentifier(node.initializer.expression) &&
+			node.initializer.expression.text === 'require' &&
+			node.initializer.arguments.length === 1
+		) {
+			const [firstArgument] = node.initializer.arguments
+			if (ts.isStringLiteral(firstArgument)) {
+				return {
+					name: node.name.getText().trim(),
+					path: firstArgument.text,
+				}
+			}
+		}
+
+		if (
+			// Check for `const x = require('...').default`
+			ts.isPropertyAccessExpression(node.initializer) &&
+			ts.isCallExpression(node.initializer.expression) &&
+			ts.isIdentifier(node.initializer.expression.expression) &&
+			node.initializer.expression.expression.text === 'require' &&
+			node.initializer.expression.arguments.length === 1
+		) {
+			const [firstArgument] = node.initializer.expression.arguments
+			if (ts.isStringLiteral(firstArgument)) {
+				const directImportName = node.initializer.name.text
+
+				if (ts.isIdentifier(node.name)) {
+					return {
+						name: '{ ' + directImportName + ' as ' + node.name.text + ' }',
+						path: firstArgument.text,
+					}
+				}
+
+				if (directImportName === 'default' && ts.isObjectBindingPattern(node.name) && node.name.elements.length > 0) {
+					return {
+						name: '{ ' + node.name.elements.map(stub => stub.getText().trim()).join(', ') + ' }',
+						path: firstArgument.text,
+					}
+				}
+			}
+		}
+
+		return null
 	}
 }
 
