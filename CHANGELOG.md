@@ -1,4 +1,5 @@
 ## 1.7.0
+- Amend default import identifiers.
 - Add namespace imports to the list.
 - Add support of multiple-source filters in the extension configuration.
 

@@ -268,7 +268,12 @@ export default class JavaScript implements Language {
 
 		for (const [name, { pathList, sourceText }] of await getExportedIdentifiers(codeTree, fileIdentifierCache)) {
 			if (_.uniq(pathList).length === 1) {
-				this.fileCache.push(new FileIdentifierItem(filePath, name, sourceText))
+				this.fileCache.push(new FileIdentifierItem(
+					filePath,
+					name === '*default' ? 'default' : 'named',
+					name === '*default' ? '' : name,
+					sourceText
+				))
 			}
 		}
 	}
@@ -336,26 +341,22 @@ export default class JavaScript implements Language {
 				}
 
 				if (this.fileCache.length === 0) {
-					const priorityPathList = _.chain([vscode.window.activeTextEditor, ...vscode.window.visibleTextEditors])
-						.compact()
-						.map(editor => _.trimEnd(fp.dirname(editor.document.fileName), fp.sep) + fp.sep)
-						.uniq()
-						.sortBy(path => -path.split(fp.sep).length)
-						.value()
+					const links = await vscode.workspace.findFiles('**/*')
 
-					const sourceFileLinks = await vscode.workspace.findFiles('**/*')
-					const sortedFileLinks = _.sortBy(sourceFileLinks, link => {
-						const rank = _.findIndex(priorityPathList, path => link.fsPath.startsWith(path))
-						return rank === -1 ? Infinity : rank
-					})
-
+					// Create empty cache objects which will be used in another function
 					const fileIdentifierCache = new Map<FilePath, IdentifierMap>()
-					const fullPathCache = _.fromPairs(sourceFileLinks.map(link => [link.fsPath, true]))
+					const fullPathCache = _.fromPairs(links.map(link => [link.fsPath, true]))
 
-					for (const link of sortedFileLinks) {
+					for (const link of links) {
 						await this.setFileCache(link.fsPath, fileIdentifierCache, fullPathCache)
 					}
-				}
+
+					// Rewrite default-imported labels
+					for (const item of this.fileCache) {
+						if (item instanceof FileIdentifierItem && item.kind === 'default' && this.defaultImportCache.has(item.info.fullPath)) {
+							item.label = this.defaultImportCache.get(item.info.fullPath)
+						}
+					}
 
 					// Add namespace-imported to the list
 					for (const [filePath, { name, sourceText }] of this.namespaceImportCache) {
@@ -852,7 +853,6 @@ class FileIdentifierItem extends FileItem {
 	readonly id: string
 	readonly kind: 'default' | 'named' | 'namespace'
 	readonly name: string
-	readonly defaultExported: boolean
 	label: string
 	description: string
 	detail: string
@@ -864,10 +864,7 @@ class FileIdentifierItem extends FileItem {
 		this.kind = kind
 		this.name = name
 
-		this.defaultExported = name === '*default'
-
-		if (!this.defaultExported) {
-			this.label = name
+		this.label = name || _.words(this.info.fileNameWithoutExtension.replace(/\..+/g, '')).join('')
 
 			const workspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))
 			if (workspace) {
@@ -876,7 +873,6 @@ class FileIdentifierItem extends FileItem {
 			} else {
 				this.description = this.info.fullPath
 			}
-		}
 
 		this.detail = _.truncate(sourceText, {
 			length: 120,
@@ -888,7 +884,7 @@ class FileIdentifierItem extends FileItem {
 		const indexFilePath = await tryGetFullPath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
 		const workingDirectory = fp.dirname(document.fileName)
 
-		const autoName = _.words(this.label.replace(/\..+/g, '')).join('')
+		const path = await this.getRelativePath(document, language.importPattern)
 
 		// Try to import from the closest index file
 		if (indexFilePath && this.info.fullPath !== indexFilePath && indexFilePath.startsWith(workingDirectory + fp.sep) === false) {
@@ -928,21 +924,10 @@ class FileIdentifierItem extends FileItem {
 					continue
 				}
 
-				const path = await indexFile.getRelativePath(document, language.importPattern)
-
 				if (exportedName === '*default') {
 					return {
-						name: language.defaultImportCache.get(indexFile.info.fullPath) || autoName,
+						name: language.defaultImportCache.get(indexFile.info.fullPath),
 						kind: 'default',
-						path,
-					}
-				}
-
-				const namespace = language.namespaceImportCache.get(indexFile.info.fullPath)
-				if (namespace) {
-					return {
-						name: namespace,
-						kind: 'namespace',
 						path,
 					}
 				}
