@@ -100,8 +100,10 @@ export default class Stylus implements Language {
 	async addItem(filePath: string) {
 		if (this.fileItemCache) {
 			const fileInfo = new FileInfo(filePath)
-			const rootPath = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath)).uri.fsPath
-			this.fileItemCache.push(new FileItem(fileInfo, rootPath))
+			const rootPath = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))?.uri.fsPath
+			if (rootPath) {
+				this.fileItemCache.push(new FileItem(fileInfo, rootPath))
+			}
 		}
 	}
 
