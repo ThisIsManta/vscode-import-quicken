@@ -817,8 +817,6 @@ class FileItem implements Item {
 			const existingImports = getExistingImports(codeTree)
 			const duplicateImport = getDuplicateImport(existingImports, path)
 			if (duplicateImport) {
-				vscode.window.showErrorMessage(`The import of "${this.label}" already exists.`, { modal: true })
-				focusAt(duplicateImport.node, document)
 				return null
 			}
 
@@ -1045,8 +1043,6 @@ class FileIdentifierItem extends FileItem {
 					} else if (ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 						// Try merging `{ named }` with `{ named }`
 						if (duplicateImport.node.importClause.namedBindings.elements.some(node => node.name.text === name)) {
-							vscode.window.showErrorMessage(`The import of "${name}" already exists.`, { modal: true })
-							focusAt(duplicateImport.node, document)
 							return null
 
 						} else {
@@ -1068,8 +1064,6 @@ class FileIdentifierItem extends FileItem {
 				} else if (kind === 'default') { // In case of `import default from "path"`
 					if (duplicateImport.node.importClause.name) {
 						// Try merging `default` with `default`
-						vscode.window.showErrorMessage(`The import of "${name}" already exists.`, { modal: true })
-						focusAt(duplicateImport.node, document)
 						return null
 
 					} else if (ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)) {
@@ -1106,8 +1100,6 @@ class FileIdentifierItem extends FileItem {
 				}
 
 			} else {
-				vscode.window.showErrorMessage(`The import of "${name}" already exists.`, { modal: true })
-				focusAt(duplicateImport.node, document)
 				return null
 			}
 		}
@@ -1208,8 +1200,7 @@ class NodeModuleItem implements Item {
 			if (kind === 'default') {
 				if (duplicateImport.node.importClause.name) {
 					// Try merging `default` with `default`
-					vscode.window.showErrorMessage(`The import of "${path}" already exists.`, { modal: true })
-					focusAt(duplicateImport.node, document)
+					// Do nothing
 
 				} else if (duplicateImport.node.importClause.namedBindings && ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 					// Try merging `default` with `{ named }`
@@ -1222,8 +1213,7 @@ class NodeModuleItem implements Item {
 				if (duplicateImport.node.importClause.namedBindings && ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 					// Try merging `{ named }` with `{ named }`
 					if (duplicateImport.node.importClause.namedBindings.elements.some(node => node.name.text === name)) {
-						vscode.window.showErrorMessage(`The import of "${name}" already exists.`, { modal: true })
-						focusAt(duplicateImport.node, document)
+						// Do nothing
 
 					} else {
 						if (duplicateImport.node.importClause.namedBindings.elements.length > 0) {

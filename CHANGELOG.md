@@ -1,3 +1,6 @@
+## 1.7.1
+- Amend not showing error dialogs when duplicate imports.
+
 ## 1.7.0
 - Amend file path so the list shows full path.
 - Amend default import identifiers.
