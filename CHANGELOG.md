@@ -1,6 +1,7 @@
 ## 1.7.0
 - Amend file path so the list shows full path.
 - Amend default import identifiers.
+- Amend node module default and namespace auto imports.
 - Add namespace imports to the list.
 - Add support of multiple-source filters in the extension configuration.
 

@@ -1344,18 +1344,18 @@ class NodeModuleItem implements Item {
 		const declarationTypes = await getDeclarationIdentifiers(this.name, declarationPath)
 		const typeHasDefaultExport = declarationTypes.includes('*default')
 
+		const importedItems = language.nodeIdentifierCache.get(packageJsonPath)?.filter(item => item.name === this.name) || []
 		if (
-			_.without(declarationTypes, '*default').length === 0 &&
-			language.nodeIdentifierCache.get(packageJsonPath)?.find(item => item.name === this.name && item.kind === 'named') === undefined
+			defaultImportIsPreferred &&
+			(_.without(declarationTypes, '*default').length === 0 || importedItems.some(item => item.kind === 'default'))
 		) {
-			if (defaultImportIsPreferred) {
-				await process('default', language.defaultImportCache.get(this.name) || autoName, this.name)
-				return
+			await process('default', language.defaultImportCache.get(this.name) || autoName, this.name)
+			return
+		}
 
-			} else {
-				await process('namespace', language.namespaceImportCache.get(this.name)?.name || autoName, this.name)
-				return
-			}
+		if (importedItems.some(item => item.kind === 'namespace')) {
+			await process('namespace', language.namespaceImportCache.get(this.name)?.name || autoName, this.name)
+			return
 		}
 
 		const select = await vscode.window.showQuickPick([
