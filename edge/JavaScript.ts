@@ -116,7 +116,7 @@ export default class JavaScript implements Language {
 	private fileCache: Array<FileItem> = []
 	readonly importPattern = new ImportPattern()
 	readonly defaultImportCache = new Map<FilePath, string>()
-	readonly namespaceImportCache = new Map<FilePath, string>()
+	readonly namespaceImportCache = new Map<FilePath, { name: string, sourceText: string }>()
 	readonly nodeModuleCache = new Map<PackageJsonPath, Array<NodeModuleItem>>()
 	readonly nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 	readonly directModuleCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
@@ -220,12 +220,15 @@ export default class JavaScript implements Language {
 
 		this.importPattern.selectiveScan(existingImports)
 
-		for (const { kind, identifier, path, fullPath } of importedIdentifiers) {
+		for (const { kind, identifier, path, fullPath, sourceText } of importedIdentifiers) {
 			if (kind === 'default') {
 				this.defaultImportCache.set(fullPath || path, identifier)
 
 			} else if (kind === 'namespace') {
-				this.namespaceImportCache.set(fullPath || path, identifier)
+				this.namespaceImportCache.set(fullPath || path, {
+					name: identifier,
+					sourceText,
+				})
 			}
 		}
 
@@ -351,6 +354,12 @@ export default class JavaScript implements Language {
 
 					for (const link of sortedFileLinks) {
 						await this.setFileCache(link.fsPath, fileIdentifierCache, fullPathCache)
+					}
+				}
+
+					// Add namespace-imported to the list
+					for (const [filePath, { name, sourceText }] of this.namespaceImportCache) {
+						this.fileCache.push(new FileIdentifierItem(filePath, 'namespace', name, sourceText))
 					}
 				}
 
@@ -842,16 +851,18 @@ class FileItem implements Item {
 
 class FileIdentifierItem extends FileItem {
 	readonly id: string
+	readonly kind: 'default' | 'named' | 'namespace'
 	readonly name: string
 	readonly defaultExported: boolean
 	label: string
 	description: string
 	detail: string
 
-	constructor(filePath: string, name: string, sourceText: string) {
+	constructor(filePath: string, kind: 'default' | 'named' | 'namespace', name: string, sourceText: string) {
 		super(filePath)
 
-		this.id = filePath + '::' + name
+		this.id = filePath + '::' + kind + '::' + name
+		this.kind = kind
 		this.name = name
 
 		this.defaultExported = name === '*default'
@@ -945,31 +956,10 @@ class FileIdentifierItem extends FileItem {
 			}
 		}
 
-		const path = await this.getRelativePath(document, language.importPattern)
-
-		if (this.defaultExported) {
-			const name = language.defaultImportCache.get(this.info.fullPath) || autoName
-			return {
-				name,
-				kind: 'default',
-				path,
-			}
-		}
-
-		const namespace = language.namespaceImportCache.get(this.info.fullPath)
-		if (namespace) {
-			return {
-				name: namespace,
-				kind: 'namespace',
-				path,
-			}
-
-		} else {
-			return {
-				name: this.name,
-				kind: 'named',
-				path,
-			}
+		return {
+			name: this.name,
+			kind: this.kind,
+			path,
 		}
 	}
 
@@ -1340,7 +1330,7 @@ class NodeModuleItem implements Item {
 				if (language.namespaceImportCache.has(path)) {
 					return {
 						kind: 'namespace',
-						name: language.namespaceImportCache.get(path),
+						name: language.namespaceImportCache.get(path)!.name,
 					}
 				}
 
@@ -1379,7 +1369,7 @@ class NodeModuleItem implements Item {
 				return
 
 			} else {
-				await process('namespace', language.namespaceImportCache.get(this.name) || autoName, this.name)
+				await process('namespace', language.namespaceImportCache.get(this.name)?.name || autoName, this.name)
 				return
 			}
 		}
@@ -1397,7 +1387,7 @@ class NodeModuleItem implements Item {
 			await process('default', language.defaultImportCache.get(this.name) || autoName, this.name)
 
 		} else if (select === '*') {
-			await process('namespace', language.namespaceImportCache.get(this.name) || autoName, this.name)
+			await process('namespace', language.namespaceImportCache.get(this.name)?.name || autoName, this.name)
 
 		} else {
 			await process('named', select, this.name)
@@ -1661,6 +1651,7 @@ function getRequirePath(node: ts.Node) {
 interface ImportStatementForReadOnly {
 	node: ts.ImportDeclaration | ts.VariableStatement | ts.ExpressionStatement
 	path: string
+	sourceText: string
 }
 
 function getExistingImports(codeTree: ts.SourceFile) {
@@ -1678,6 +1669,7 @@ function getExistingImports(codeTree: ts.SourceFile) {
 			imports.push({
 				node,
 				path: _.trimEnd(node.moduleSpecifier.text, '/'),
+				sourceText: node.getText(),
 			})
 
 		} else if (ts.isVariableStatement(node)) {
@@ -1688,6 +1680,7 @@ function getExistingImports(codeTree: ts.SourceFile) {
 					imports.push({
 						node,
 						path: getRequirePath(stub.initializer),
+						sourceText: node.getText(),
 					})
 				}
 			})
@@ -1697,6 +1690,7 @@ function getExistingImports(codeTree: ts.SourceFile) {
 			imports.push({
 				node,
 				path: getRequirePath(node.expression),
+				sourceText: node.getText(),
 			})
 		}
 	})

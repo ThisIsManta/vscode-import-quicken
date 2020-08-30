@@ -1,3 +1,6 @@
+## 1.7.0
+- Add namespace imports to the list.
+
 ## 1.6.0
 - Add reading type definitions from triple-slash directives.
 - Add ability to directly import module files.
