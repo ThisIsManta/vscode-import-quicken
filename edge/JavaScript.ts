@@ -590,15 +590,14 @@ export default class JavaScript implements Language {
 			languageConfig = _.merge({}, this.userConfig.javascript, this.userConfig.typescript, languageConfig)
 		}
 
-		const targetMatcher = _.chain(languageConfig?.filter || {})
+		const targetMatchers = _.chain(languageConfig?.filter || {})
 			.toPairs()
 			.filter(([source]) => new RegExp(source).test(filePath))
 			.map(([, target]) => {
 				// eslint-disable-next-line no-template-curly-in-string
 				return new RegExp(target.replace('${TM_FILENAME_BASE}', fileName))
 			})
-			.first()
-			.value() || undefined
+			.value()
 
 		const tsconfig = this.getTypeScriptConfiguration(document)
 
@@ -613,7 +612,7 @@ export default class JavaScript implements Language {
 		}))
 
 		return (fileInfo: FileInfo) => {
-			if (targetMatcher && fileInfo.fullPathForPOSIX.startsWith(rootPath + fp.posix.sep) && targetMatcher.test(fileInfo.fullPathForPOSIX.substring(rootPath.length + 1)) === false) {
+			if (targetMatchers.length > 0 && fileInfo.fullPathForPOSIX.startsWith(rootPath + fp.posix.sep) && targetMatchers.some(matcher => matcher.test(fileInfo.fullPathForPOSIX.substring(rootPath.length + 1)) === false)) {
 				return false
 			}
 

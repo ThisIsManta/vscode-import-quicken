@@ -1,5 +1,6 @@
 ## 1.7.0
 - Add namespace imports to the list.
+- Add support of multiple-source filters in the extension configuration.
 
 ## 1.6.0
 - Add reading type definitions from triple-slash directives.
