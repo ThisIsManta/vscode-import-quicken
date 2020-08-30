@@ -785,10 +785,10 @@ class FileItem implements Item {
 
 		const workspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))
 		if (workspace) {
-			this.description = _.trim(this.info.directoryPath.substring(workspace.uri.fsPath.length), fp.sep)
+			this.description = _.trim(this.info.fileNameWithExtension.substring(workspace.uri.fsPath.length), fp.sep)
 
 		} else {
-			this.description = this.info.directoryPath
+			this.description = this.info.fileNameWithExtension
 		}
 	}
 
@@ -866,13 +866,13 @@ class FileIdentifierItem extends FileItem {
 
 		this.label = name || _.words(this.info.fileNameWithoutExtension.replace(/\..+/g, '')).join('')
 
-			const workspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))
-			if (workspace) {
-				this.description = _.trim(this.info.fullPath.substring(workspace.uri.fsPath.length), fp.sep)
+		const workspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))
+		if (workspace) {
+			this.description = _.trim(this.info.fullPath.substring(workspace.uri.fsPath.length), fp.sep)
 
-			} else {
-				this.description = this.info.fullPath
-			}
+		} else {
+			this.description = this.info.fullPath
+		}
 
 		this.detail = _.truncate(sourceText, {
 			length: 120,
