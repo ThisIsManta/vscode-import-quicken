@@ -1,5 +1,6 @@
 ## 1.7.2
 - Fix node module default auto imports.
+- Fix missing import identifiers.
 
 ## 1.7.1
 - Amend not showing error dialogs when duplicate imports.

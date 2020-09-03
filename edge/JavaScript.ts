@@ -266,15 +266,28 @@ export default class JavaScript implements Language {
 			}
 		}
 
-		for (const [name, { pathList, sourceText }] of await getExportedIdentifiers(codeTree, fileIdentifierCache)) {
-			if (_.uniq(pathList).length === 1) {
-				this.fileCache.push(new FileIdentifierItem(
-					filePath,
-					name === '*default' ? 'default' : 'named',
-					name === '*default' ? '' : name,
-					sourceText
-				))
+		const exportedIdentifiers = await getExportedIdentifiers(codeTree, fileIdentifierCache)
+
+		const defaultExportedIdentifier = exportedIdentifiers.get('*default')
+		let defaultExportedName = ''
+
+		// Skip named identifers which is also exported default
+		if (defaultExportedIdentifier) {
+			for (const [name, identifier] of exportedIdentifiers) {
+				if (identifier !== defaultExportedIdentifier && identifier.sourceText === defaultExportedIdentifier.sourceText) {
+					exportedIdentifiers.delete(name)
+					defaultExportedName = name
+				}
 			}
+		}
+
+		for (const [name, identifier] of exportedIdentifiers) {
+			this.fileCache.push(new FileIdentifierItem(
+				filePath,
+				identifier === defaultExportedIdentifier ? 'default' : 'named',
+				identifier === defaultExportedIdentifier ? defaultExportedName : name,
+				identifier.sourceText
+			))
 		}
 	}
 
@@ -882,8 +895,6 @@ class FileIdentifierItem extends FileItem {
 		const indexFilePath = await tryGetFullPath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
 		const workingDirectory = fp.dirname(document.fileName)
 
-		const path = await this.getRelativePath(document, language.importPattern)
-
 		// Try to import from the closest index file
 		if (indexFilePath && this.info.fullPath !== indexFilePath && indexFilePath.startsWith(workingDirectory + fp.sep) === false) {
 			const indexFile = new FileItem(indexFilePath)
@@ -913,14 +924,12 @@ class FileIdentifierItem extends FileItem {
 			}
 
 			const exportedIdentifiersFromIndexFile = await getExportedIdentifiers(indexFilePath)
-			for (const [exportedName, { originalName, pathList }] of exportedIdentifiersFromIndexFile) {
+			for (const [exportedName, { pathList }] of exportedIdentifiersFromIndexFile) {
 				if (_.includes(pathList, this.info.fullPath) === false) {
 					continue
 				}
 
-				if (originalName !== this.name) {
-					continue
-				}
+				const path = await indexFile.getRelativePath(document, language.importPattern)
 
 				if (exportedName === '*default') {
 					return {
@@ -930,10 +939,12 @@ class FileIdentifierItem extends FileItem {
 					}
 				}
 
-				return {
-					name: exportedName,
-					kind: 'named',
-					path,
+				if (exportedName === this.name) {
+					return {
+						name: exportedName,
+						kind: 'named',
+						path,
+					}
 				}
 			}
 		}
@@ -941,7 +952,7 @@ class FileIdentifierItem extends FileItem {
 		return {
 			name: this.name,
 			kind: this.kind,
-			path,
+			path: await this.getRelativePath(document, language.importPattern),
 		}
 	}
 
@@ -1337,7 +1348,11 @@ class NodeModuleItem implements Item {
 		const namedImportItems = language.nodeIdentifierCache.get(packageJsonPath)?.filter(item => item.name === this.name) || []
 		if (
 			defaultImportIsPreferred &&
-			(_.without(declarationTypes, '*default').length === 0 || namedImportItems.length === 0)
+			(
+				_.without(declarationTypes, '*default').length === 0 ||
+				namedImportItems.length === 0 ||
+				namedImportItems.length === 1 && namedImportItems[0].kind === 'default'
+			)
 		) {
 			await process('default', language.defaultImportCache.get(this.name) || autoName, this.name)
 			return
@@ -2050,7 +2065,13 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 				}
 
 			} else if (
-				(ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) || ts.isEnumDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) &&
+				(
+					ts.isFunctionDeclaration(node) ||
+					ts.isClassDeclaration(node) ||
+					ts.isEnumDeclaration(node) ||
+					ts.isInterfaceDeclaration(node) ||
+					ts.isTypeAliasDeclaration(node)
+				) &&
 				node.modifiers && node.modifiers.length > 0 && node.modifiers[0].kind === ts.SyntaxKind.ExportKeyword
 			) {
 				if (node.modifiers.length > 1 && node.modifiers[1].kind === ts.SyntaxKind.DefaultKeyword) {
