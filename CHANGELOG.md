@@ -1,3 +1,6 @@
+## 1.7.2
+- Fix node module default auto imports.
+
 ## 1.7.1
 - Amend not showing error dialogs when duplicate imports.
 

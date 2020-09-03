@@ -1334,16 +1334,16 @@ class NodeModuleItem implements Item {
 		const declarationTypes = await getDeclarationIdentifiers(this.name, declarationPath)
 		const typeHasDefaultExport = declarationTypes.includes('*default')
 
-		const importedItems = language.nodeIdentifierCache.get(packageJsonPath)?.filter(item => item.name === this.name) || []
+		const namedImportItems = language.nodeIdentifierCache.get(packageJsonPath)?.filter(item => item.name === this.name) || []
 		if (
 			defaultImportIsPreferred &&
-			(_.without(declarationTypes, '*default').length === 0 || importedItems.some(item => item.kind === 'default'))
+			(_.without(declarationTypes, '*default').length === 0 || namedImportItems.length === 0)
 		) {
 			await process('default', language.defaultImportCache.get(this.name) || autoName, this.name)
 			return
 		}
 
-		if (importedItems.some(item => item.kind === 'namespace')) {
+		if (namedImportItems.some(item => item.kind === 'namespace')) {
 			await process('namespace', language.namespaceImportCache.get(this.name)?.name || autoName, this.name)
 			return
 		}
