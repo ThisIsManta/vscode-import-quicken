@@ -1,5 +1,8 @@
-## 1.7.3
+## 1.8.0
 - Fix unnamed default imports.
+- Fix too many of the same identifiers due to re-exports.
+- Amend the list so that identifiers from index files are present in the list.
+- Improve import generation performance.
 
 ## 1.7.2
 - Fix node module default auto imports.

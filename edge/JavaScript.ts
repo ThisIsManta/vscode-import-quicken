@@ -114,9 +114,10 @@ type PackageJsonPath = string
 
 export default class JavaScript implements Language {
 	private fileCache: Array<FileItem> = []
+	private preferentialImportPaths = new Map<string, Array<FilePath>>()
 	readonly importPattern = new ImportPattern()
-	readonly defaultImportCache = new Map<FilePath, string>()
-	readonly namespaceImportCache = new Map<FilePath, { name: string, sourceText: string }>()
+	readonly defaultImportCache = new Map<FilePath, IdentifierName>()
+	readonly namespaceImportCache = new Map<FilePath, { name: IdentifierName, sourceText: string }>()
 	readonly nodeModuleCache = new Map<PackageJsonPath, Array<NodeModuleItem>>()
 	readonly nodeIdentifierCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
 	readonly directModuleCache = new Map<PackageJsonPath, Array<NodeIdentifierItem>>()
@@ -268,26 +269,16 @@ export default class JavaScript implements Language {
 
 		const exportedIdentifiers = await getExportedIdentifiers(codeTree, fileIdentifierCache)
 
-		const defaultExportedIdentifier = exportedIdentifiers.get('*default')
-		let defaultExportedName = ''
-
-		// Skip named identifers which is also exported default
-		if (defaultExportedIdentifier) {
-			for (const [name, identifier] of exportedIdentifiers) {
-				if (identifier !== defaultExportedIdentifier && identifier.sourceText === defaultExportedIdentifier.sourceText) {
-					exportedIdentifiers.delete(name)
-					defaultExportedName = name
-				}
-			}
-		}
-
 		for (const [name, identifier] of exportedIdentifiers) {
-			this.fileCache.push(new FileIdentifierItem(
-				filePath,
-				identifier === defaultExportedIdentifier ? 'default' : 'named',
-				identifier === defaultExportedIdentifier ? defaultExportedName : name,
-				identifier.sourceText
-			))
+			const sourcePath = _.last(identifier.pathList)
+			const item = name === '*default'
+				? new FileDefaultItem(filePath, identifier.originalName, identifier.sourceText, sourcePath)
+				: new FileIdentifierItem(filePath, 'named', name, identifier.sourceText, sourcePath)
+			this.fileCache.push(item)
+
+			if (INDEX_FILE_PATTERN.test(filePath) || identifier.pathList.length > (this.preferentialImportPaths.get(item.graphId)?.length || 0)) {
+				this.preferentialImportPaths.set(item.graphId, identifier.pathList)
+			}
 		}
 	}
 
@@ -364,16 +355,9 @@ export default class JavaScript implements Language {
 						await this.setFileCache(link.fsPath, fileIdentifierCache, fullPathCache)
 					}
 
-					// Rewrite default-imported labels
-					for (const item of this.fileCache) {
-						if (item instanceof FileIdentifierItem && item.kind === 'default' && this.defaultImportCache.has(item.info.fullPath)) {
-							item.label = this.defaultImportCache.get(item.info.fullPath)
-						}
-					}
-
 					// Add namespace-imported to the list
 					for (const [filePath, { name, sourceText }] of this.namespaceImportCache) {
-						this.fileCache.push(new FileIdentifierItem(filePath, 'namespace', name, sourceText))
+						this.fileCache.push(new FileIdentifierItem(filePath, 'namespace', name, sourceText, filePath))
 					}
 				}
 
@@ -398,8 +382,28 @@ export default class JavaScript implements Language {
 			return null
 		}
 
-		const filter = this.createFileFilter(document)
-		const fileItems = this.fileCache.filter(file => filter(file.info))
+		const fileFilter = this.createFileFilter(document)
+		const contextAwareFileItems = this.fileCache.filter(item =>
+			// Exclude files according to the environmental context
+			fileFilter(item.info) &&
+			// Exclude the current opening file
+			item.info.fullPath !== document.fileName &&
+			// Exclude other files importing the current opening file
+			!(item instanceof FileDefaultItem && item.sourcePath === document.fileName)
+		)
+
+		const remainingFiles = new Set(contextAwareFileItems.map(item => item.info.fullPath))
+
+		const uniqueFileItems = contextAwareFileItems.filter(item => {
+			// Exclude identifiers being re-exported by an upper-level file, for example index.ts
+			if (item instanceof FileDefaultItem) {
+				const pathList = this.preferentialImportPaths.get(item.graphId)
+				const ρ = pathList?.find(path => remainingFiles.has(path))
+				return ρ === undefined || ρ === item.info.fullPath
+			}
+
+			return true
+		})
 
 		const packageJsonList = await getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
@@ -409,7 +413,7 @@ export default class JavaScript implements Language {
 		return [
 			...nodeModuleItems,
 			...nodeIdentifierItems,
-			...fileItems,
+			...uniqueFileItems,
 		]
 	}
 
@@ -423,6 +427,9 @@ export default class JavaScript implements Language {
 
 	async cutItem(filePath: string) {
 		this.fileCache = this.fileCache.filter(file => file.info.fullPath !== filePath)
+		this.preferentialImportPaths.delete(filePath)
+		this.defaultImportCache.delete(filePath)
+		this.namespaceImportCache.delete(filePath)
 
 		if (fp.basename(filePath) === 'package.json') {
 			getPackageJsonList.cache.clear()
@@ -860,22 +867,25 @@ class FileItem implements Item {
 	}
 }
 
-class FileIdentifierItem extends FileItem {
+class FileDefaultItem extends FileItem {
 	readonly id: string
-	readonly kind: 'default' | 'named' | 'namespace'
-	readonly name: string
-	label: string
-	description: string
 	detail: string
 
-	constructor(filePath: string, kind: 'default' | 'named' | 'namespace', name: string, sourceText: string) {
+	get graphId() {
+		return this.sourcePath + '::' + this.name
+	}
+
+	constructor(
+		filePath: string,
+		protected readonly name: string,
+		public readonly sourceText: string,
+		public readonly sourcePath: string,
+	) {
 		super(filePath)
 
-		this.id = filePath + '::' + kind + '::' + name
-		this.kind = kind
-		this.name = name
+		this.id = filePath
 
-		this.label = name || _.words(this.info.fileNameWithoutExtension.replace(/\..+/g, '')).join('')
+		this.label = this.info.fileNameWithExtension
 
 		const workspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))
 		if (workspace) {
@@ -891,68 +901,10 @@ class FileIdentifierItem extends FileItem {
 		})
 	}
 
-	private async getImportPattern(codeTree: ts.SourceFile, document: vscode.TextDocument, language: JavaScript): Promise<{ name: string, kind: ImportKind, path: string } | null> {
-		const indexFilePath = await tryGetFullPath([this.info.directoryPath, 'index'], this.info.fileExtensionWithoutLeadingDot)
-		const workingDirectory = fp.dirname(document.fileName)
-
-		// Try to import from the closest index file
-		if (indexFilePath && this.info.fullPath !== indexFilePath && indexFilePath.startsWith(workingDirectory + fp.sep) === false) {
-			const indexFile = new FileItem(indexFilePath)
-			const existingImports = getExistingImports(codeTree)
-
-			const getDuplicateImportForIndexFile = async () => {
-				for (const stub of existingImports) {
-					const path = await tryGetFullPath([fp.dirname(indexFilePath), stub.path], this.info.fileExtensionWithoutLeadingDot)
-					if (path === indexFilePath) {
-						return stub
-					}
-				}
-			}
-			const duplicateImportForIndexFile = await getDuplicateImportForIndexFile()
-			const duplicateImportHasImportedEverything = (
-				duplicateImportForIndexFile &&
-				ts.isImportDeclaration(duplicateImportForIndexFile.node) &&
-				duplicateImportForIndexFile.node.importClause &&
-				ts.isNamespaceImport(duplicateImportForIndexFile.node.importClause.namedBindings)
-			)
-
-			// Stop processing if there is `import * as name from "path"`
-			if (duplicateImportHasImportedEverything) {
-				vscode.window.showErrorMessage(`The import of "${this.label}" already exists through "${duplicateImportForIndexFile.path}".`, { modal: true })
-				focusAt(duplicateImportForIndexFile.node, document)
-				return null
-			}
-
-			const exportedIdentifiersFromIndexFile = await getExportedIdentifiers(indexFilePath)
-			for (const [exportedName, { pathList }] of exportedIdentifiersFromIndexFile) {
-				if (_.includes(pathList, this.info.fullPath) === false) {
-					continue
-				}
-
-				const path = await indexFile.getRelativePath(document, language.importPattern)
-
-				if (exportedName === '*default') {
-					return {
-						name: language.defaultImportCache.get(indexFile.info.fullPath),
-						kind: 'default',
-						path,
-					}
-				}
-
-				// Use `this.label` instead of `this.name` because `this.name` is possibly empty
-				if (exportedName === this.label) {
-					return {
-						name: exportedName,
-						kind: 'named',
-						path,
-					}
-				}
-			}
-		}
-
+	protected async getImportPattern(document: vscode.TextDocument, language: JavaScript): Promise<{ name: string, kind: ImportKind, path: string } | null> {
 		return {
-			name: this.name,
-			kind: this.kind,
+			name: language.defaultImportCache.get(this.info.fullPath),
+			kind: 'default',
 			path: await this.getRelativePath(document, language.importPattern),
 		}
 	}
@@ -975,7 +927,7 @@ class FileIdentifierItem extends FileItem {
 
 		const [existingImports, { name, kind, path }] = await Promise.all([
 			getExistingImportsWithFullPath(codeTree),
-			this.getImportPattern(codeTree, document, language),
+			this.getImportPattern(document, language),
 		])
 
 		const duplicateImport = getDuplicateImport(existingImports, path)
@@ -1128,6 +1080,32 @@ class FileIdentifierItem extends FileItem {
 		await editor.edit(worker => worker.insert(getInsertionPosition(existingImports, path, document), snippet))
 		await JavaScript.fixESLint()
 		setImportNameToClipboard(name)
+	}
+}
+
+class FileIdentifierItem extends FileDefaultItem {
+	readonly id: string
+
+	constructor(
+		filePath: string,
+		public readonly kind: 'named' | 'namespace',
+		public readonly name: string,
+		sourceText: string,
+		sourcePath: string,
+	) {
+		super(filePath, name, sourceText, sourcePath)
+
+		this.id = filePath + '::' + kind + '::' + name
+
+		this.label = name
+	}
+
+	protected async getImportPattern(document: vscode.TextDocument, language: JavaScript): Promise<{ name: string, kind: ImportKind, path: string } | null> {
+		return {
+			name: this.name,
+			kind: this.kind,
+			path: await this.getRelativePath(document, language.importPattern),
+		}
 	}
 }
 
