@@ -1,3 +1,6 @@
+## 1.7.3
+- Fix unnamed default imports.
+
 ## 1.7.2
 - Fix node module default auto imports.
 - Fix missing import identifiers.

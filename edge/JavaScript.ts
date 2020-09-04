@@ -939,7 +939,8 @@ class FileIdentifierItem extends FileItem {
 					}
 				}
 
-				if (exportedName === this.name) {
+				// Use `this.label` instead of `this.name` because `this.name` is possibly empty
+				if (exportedName === this.label) {
 					return {
 						name: exportedName,
 						kind: 'named',
