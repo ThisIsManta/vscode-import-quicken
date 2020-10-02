@@ -1,3 +1,6 @@
+## 1.8.1
+- Fix could not merge named import with default import.
+
 ## 1.8.0
 - Fix unnamed default imports.
 - Fix too many of the same identifiers due to re-exports.

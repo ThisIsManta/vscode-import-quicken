@@ -990,7 +990,7 @@ class FileDefaultItem extends FileItem {
 					}
 
 				} else if (kind === 'named') {
-					if (ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)) {
+					if (duplicateImport.node.importClause.namedBindings && ts.isNamespaceImport(duplicateImport.node.importClause.namedBindings)) {
 						// Try merging `{ named }` with `* as namespace`
 						const namespaceImport = duplicateImport.node.importClause.namedBindings
 						vscode.window.showErrorMessage(`The import of "${path}" already exists as "${namespaceImport.name.text}".`, { modal: true })
