@@ -986,6 +986,7 @@ class FileDefaultItem extends FileItem {
 						const position = document.positionAt(duplicateImport.node.importClause.name.getEnd())
 						await editor.edit(worker => worker.insert(position, ', * as ' + givenName))
 						await JavaScript.fixESLint()
+						setImportNameToClipboard(givenName)
 						return null
 					}
 
@@ -1002,6 +1003,7 @@ class FileDefaultItem extends FileItem {
 						const position = document.positionAt(duplicateImport.node.importClause.name.getEnd())
 						await editor.edit(worker => worker.insert(position, ', { ' + name + ' }'))
 						await JavaScript.fixESLint()
+						setImportNameToClipboard(name)
 						return null
 
 					} else if (ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
@@ -1020,6 +1022,7 @@ class FileDefaultItem extends FileItem {
 								const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getEnd() - 1)
 								await editor.edit(worker => worker.insert(position, name))
 								await JavaScript.fixESLint()
+								setImportNameToClipboard(name)
 								return null
 							}
 						}
@@ -1048,6 +1051,7 @@ class FileDefaultItem extends FileItem {
 						const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
 						await editor.edit(worker => worker.insert(position, givenName + ', '))
 						await JavaScript.fixESLint()
+						setImportNameToClipboard(givenName)
 						return null
 
 					} else {
@@ -1055,6 +1059,7 @@ class FileDefaultItem extends FileItem {
 						const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
 						await editor.edit(worker => worker.insert(position, name + ', '))
 						await JavaScript.fixESLint()
+						setImportNameToClipboard(name)
 						return null
 					}
 
@@ -1159,7 +1164,7 @@ class NodeModuleItem implements Item {
 
 		const defaultImportIsPreferred = language.checkIfImportDefaultIsPreferredOverNamespace(document)
 
-		const getPrettyName = name => _.words(_.last(name.split('/'))).map(_.upperFirst).join('')
+		const getPrettyName = (name: string) => _.words(_.last(name.split('/'))).map(_.upperFirst).join('')
 		const autoName = getPrettyName(this.name)
 
 		const process = async (kind: ImportKind, name: string, path: string) => {
@@ -1195,8 +1200,10 @@ class NodeModuleItem implements Item {
 				} else if (duplicateImport.node.importClause.namedBindings && ts.isNamedImports(duplicateImport.node.importClause.namedBindings)) {
 					// Try merging `default` with `{ named }`
 					const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getStart())
-					await editor.edit(worker => worker.insert(position, (language.defaultImportCache.get(path) || name) + ', '))
+					const formerName = language.defaultImportCache.get(path) || name
+					await editor.edit(worker => worker.insert(position, formerName + ', '))
 					await JavaScript.fixESLint()
+					setImportNameToClipboard(formerName)
 				}
 
 			} else {
@@ -1215,6 +1222,7 @@ class NodeModuleItem implements Item {
 							const position = document.positionAt(duplicateImport.node.importClause.namedBindings.getEnd() - 1)
 							await editor.edit(worker => worker.insert(position, name))
 							await JavaScript.fixESLint()
+							setImportNameToClipboard(name)
 						}
 					}
 
@@ -1223,6 +1231,7 @@ class NodeModuleItem implements Item {
 					const position = document.positionAt(duplicateImport.node.importClause.name.getEnd())
 					await editor.edit(worker => worker.insert(position, ', { ' + name + ' }'))
 					await JavaScript.fixESLint()
+					setImportNameToClipboard(name)
 				}
 			}
 		}
@@ -1700,6 +1709,7 @@ async function insertNamedImportToExistingImports(name: string, existingImports:
 
 		const position = document.positionAt(existingImports[index].getStart())
 		await editor.edit(worker => worker.insert(position, name + separator))
+		setImportNameToClipboard(name)
 		return
 	}
 
@@ -1714,6 +1724,7 @@ async function insertNamedImportToExistingImports(name: string, existingImports:
 
 	const position = document.positionAt(existingImports[existingImports.length - 1].getEnd())
 	await editor.edit(worker => worker.insert(position, separator + name))
+	setImportNameToClipboard(name)
 }
 
 type ImportKind = 'default' | 'namespace' | 'named' | null

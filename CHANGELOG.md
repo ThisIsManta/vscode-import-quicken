@@ -1,3 +1,6 @@
+## 1.8.2
+- Fix could not copy the imported identifier when merging an import using `autoCopy` settings.
+
 ## 1.8.1
 - Fix could not merge named import with default import.
 
