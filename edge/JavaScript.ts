@@ -1256,7 +1256,7 @@ class NodeModuleItem implements Item {
 				}
 			})()
 
-			const select = await new Promise<string>(resolve => {
+			const select = await new Promise<string | null>(resolve => {
 				let accepted = false
 				const picker = vscode.window.createQuickPick()
 				picker.placeholder = this.name
@@ -1272,7 +1272,7 @@ class NodeModuleItem implements Item {
 				})
 				picker.onDidHide(() => {
 					if (!accepted) {
-						resolve()
+						resolve(null)
 					}
 				})
 				picker.show()
