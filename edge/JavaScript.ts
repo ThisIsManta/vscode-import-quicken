@@ -69,8 +69,13 @@ const getDeclarationIdentifiers = _.memoize(async (moduleName: string, declarati
 		if (moduleName) {
 			for (const node of await getDeclarationIdentifiersFromReference(nodeList, [moduleName], codeTree.fileName)) {
 				if (node.modifiers && node.modifiers.some(node => node.kind === ts.SyntaxKind.ExportKeyword) && (node as any).name) {
-					// Gather all `export` members
+					// Gather `export`
 					identifiers.push((node as any).name.text)
+
+				} else if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
+					// Gather `namespace`
+					// See https://github.com/date-fns/date-fns/blob/91726f2ab6ac070a71f1a5caa39689a41f200944/typings.d.ts#L97
+					identifiers.push(node.name.text)
 				}
 			}
 		}
@@ -1316,7 +1321,7 @@ class NodeModuleItem implements Item {
 					name = getPrettyName(name)
 				}
 
-				const codeTree = await JavaScript.parse(path)
+				const codeTree = await JavaScript.parse(file.fullPath)
 				const fileHasDefaultExport = hasExportDefault(codeTree)
 
 				return {
