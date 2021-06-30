@@ -1,3 +1,9 @@
+## 1.10.0
+- Reduced start-up time.
+
+## 1.9.0
+- Added support of module namespaces.
+
 ## 1.8.2
 - Fix could not copy the imported identifier when merging an import using `autoCopy` settings.
 
