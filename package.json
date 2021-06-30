@@ -26,7 +26,7 @@
 		"theme": "dark"
 	},
 	"engines": {
-		"vscode": "^1.41.0"
+		"vscode": "^1.57.0"
 	},
 	"activationEvents": [
 		"workspaceContains:**/package.json"
@@ -108,6 +108,6 @@
 		"lodash": "^4.17.21",
 		"mz": "^2.7.0",
 		"stylus": "^0.54.8",
-		"typescript": "^4.2.4"
+		"typescript": "^4.3.4"
 	}
 }
