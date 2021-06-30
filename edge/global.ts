@@ -1,9 +1,9 @@
 import * as _ from 'lodash'
-import { fs } from 'mz'
 import * as fp from 'path'
 import * as vscode from 'vscode'
 
 import * as JavaScript from './JavaScript'
+import { isFile, isDirectory } from './utility'
 
 export interface ExtensionConfiguration {
 	autoCopy: boolean
@@ -95,18 +95,18 @@ export async function tryGetFullPath(pathList: Array<string>, preferredExtension
 		}
 	}
 
-	if (fp.extname(fullPath) && await fs.exists(fullPath) && (await fs.lstat(fullPath)).isFile()) {
+	if (fp.extname(fullPath) && await isFile(fullPath)) {
 		return fullPath
 	}
 
 	for (const extension of possibleExtensions) {
 		const fullPathWithExtension = fullPath + '.' + extension
-		if (await fs.exists(fullPathWithExtension) && (await fs.lstat(fullPathWithExtension)).isFile()) {
+		if (await isFile(fullPathWithExtension)) {
 			return fullPathWithExtension
 		}
 	}
 
-	if (await fs.exists(fullPath) && (await fs.lstat(fullPath)).isDirectory()) {
+	if (await isDirectory(fullPath)) {
 		const indexPath = await tryGetFullPath([...pathList, 'index'], preferredExtension, defaultExtensions)
 		if (indexPath !== undefined) {
 			return indexPath

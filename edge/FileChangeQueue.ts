@@ -1,4 +1,4 @@
-import { fs } from 'mz'
+import * as fs from 'fs'
 import * as vscode from 'vscode'
 
 export default class FileChangeQueue extends vscode.Disposable {

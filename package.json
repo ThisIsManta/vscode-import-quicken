@@ -106,7 +106,6 @@
 		"glob": "^7.1.7",
 		"high-standard": "^2.1.2",
 		"lodash": "^4.17.21",
-		"mz": "^2.7.0",
 		"vscode": "^1.1.37"
 	},
 	"dependencies": {

@@ -1,14 +1,15 @@
 import * as cp from 'child_process'
-import * as glob from 'glob'
+import * as fs from 'fs/promises'
+import glob from 'glob'
 import * as _ from 'lodash'
 import { Minimatch } from 'minimatch'
-import { fs } from 'mz'
 import * as fp from 'path'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
 
 import FileInfo, { getPosixPath } from './FileInfo'
 import { ExtensionConfiguration, Language, Item, findFilesRoughly, tryGetFullPath, setImportNameToClipboard } from './global'
+import { isDirectory, isFile, isFileOrDirectory } from './utility'
 
 export interface JavaScriptConfiguration {
 	filter: Readonly<{ [key: string]: string }>
@@ -529,8 +530,8 @@ export default class JavaScript implements Language {
 		const getBrokenImports = async () => {
 			const imports = await Promise.all(totalImports.map(async stub => {
 				if (
-					await fs.exists(fp.join(documentFileInfo.directoryPath, stub.originalRelativePath)) === false &&
-					await fs.exists(fp.join(documentFileInfo.directoryPath, stub.originalRelativePath + '.' + documentFileInfo.fileExtensionWithoutLeadingDot)) === false
+					await isFileOrDirectory(fp.join(documentFileInfo.directoryPath, stub.originalRelativePath)) === false &&
+					await isFileOrDirectory(fp.join(documentFileInfo.directoryPath, stub.originalRelativePath + '.' + documentFileInfo.fileExtensionWithoutLeadingDot)) === false
 				) {
 					return stub
 				}
@@ -1385,7 +1386,7 @@ class NodeModuleItem implements Item {
 		// Traverse through the deepest `node_modules` first
 		for (const rootPath of _.sortBy(packageJson.nodeModulePathList).reverse()) {
 			const modulePath = fp.join(rootPath, 'node_modules', this.name)
-			if (await fs.exists(modulePath) && (await fs.lstat(modulePath)).isDirectory()) {
+			if (await isDirectory(modulePath)) {
 				return modulePath
 			}
 		}
@@ -2426,8 +2427,8 @@ async function resolveFullPathInsideModule(moduleNameOrFilePath: string, fileDir
 	const packageJsonList = await getPackageJsonList()
 
 	if (await Promise.all([
-		fs.exists(fp.join(fileDirectory, 'package.json')),
-		fs.exists(fp.join(fileDirectory, 'node_modules')),
+		isFile(fp.join(fileDirectory, 'package.json')),
+		isDirectory(fp.join(fileDirectory, 'node_modules')),
 	])) {
 		packageJsonList.push({
 			packageJsonPath: fp.join(fileDirectory, 'package.json'),
@@ -2473,7 +2474,7 @@ async function getDeclarationPath(moduleName: string, document: Pick<vscode.Text
 			fp.join('@types', moduleName.replace(/^@/, '').replace(/\//, '__')),
 		].map(path => fp.join(rootPath, 'node_modules', path, 'package.json'))
 		for (const packageJsonPath of possiblePathList) {
-			if (await fs.exists(packageJsonPath)) {
+			if (await isFile(packageJsonPath)) {
 				try {
 					const { types, typings } = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
 					const declarationPath = types ?? typings
@@ -2489,7 +2490,7 @@ async function getDeclarationPath(moduleName: string, document: Pick<vscode.Text
 		}
 
 		const indexDeclarationPath = fp.join(rootPath, 'node_modules', moduleName, 'index.d.ts')
-		if (await fs.exists(indexDeclarationPath)) {
+		if (await isFile(indexDeclarationPath)) {
 			return indexDeclarationPath
 		}
 	}

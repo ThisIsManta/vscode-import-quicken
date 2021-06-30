@@ -1,11 +1,12 @@
+import * as fs from 'fs/promises'
 import * as _ from 'lodash'
-import { fs } from 'mz'
 import * as fp from 'path'
 import { Parser, nodes as Nodes } from 'stylus'
 import * as vscode from 'vscode'
 
 import FileInfo from './FileInfo'
 import { Language, Item, findFilesRoughly, tryGetFullPath } from './global'
+import { isFileOrDirectory } from './utility'
 
 const SUPPORTED_LANGUAGE = /^stylus$/
 
@@ -144,7 +145,7 @@ export default class Stylus implements Language {
 				path = _.get(node, 'args.nodes.0.nodes.0')
 			}
 
-			if (path && await fs.exists(path) === false) {
+			if (path && await isFileOrDirectory(path) === false) {
 				brokenImports.push(path)
 			}
 		}
