@@ -515,7 +515,6 @@
 		],
 		"lodash/prefer-compact": "error",
 		"lodash/prefer-get": "error",
-		"lodash/prefer-immutable-method": "warn",
 		"lodash/prefer-lodash-typecheck": "error",
 		"lodash/prefer-noop": "warn",
 		"lodash/prefer-reject": "error",

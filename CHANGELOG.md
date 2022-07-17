@@ -1,8 +1,9 @@
-## 1.10.0
-- Reduced start-up time.
+## 2.0.0
+- Improve start-up time.
+- Use the shortest path automatically when there is a file that re-exports the selected identifier (for example, an index file) and vice versa depends on the path of the current active document.
 
 ## 1.9.0
-- Added support of module namespaces.
+- Add support of module namespaces.
 
 ## 1.8.2
 - Fix could not copy the imported identifier when merging an import using `autoCopy` settings.

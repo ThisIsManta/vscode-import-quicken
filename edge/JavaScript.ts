@@ -120,7 +120,7 @@ type PackageJsonPath = string
 
 export default class JavaScript implements Language {
 	private fileCache: Array<FileItem> = []
-	private preferentialImportPaths = new Map<string, Array<FilePath>>()
+	readonly transitExportTracer = new Map<FileDefaultItem['traceID'], Array<FileDefaultItem>>()
 	readonly importPattern = new ImportPattern()
 	readonly defaultImportCache = new Map<FilePath, IdentifierName>()
 	readonly namespaceImportCache = new Map<FilePath, { name: IdentifierName, sourceText: string }>()
@@ -199,7 +199,7 @@ export default class JavaScript implements Language {
 		return true
 	}
 
-	private async setFileCache(filePath: string, fileIdentifierCache?: Map<FilePath, IdentifierMap>, fullPathCache?: { [fullPath: string]: boolean }) {
+	private async setFileCache(filePath: string, exportedIdentifierCache?: Map<FilePath, IdentifierMap>, fullPathCache?: { [fullPath: string]: boolean }) {
 		if (filePath.includes(fp.sep) === false) {
 			return
 		}
@@ -273,18 +273,17 @@ export default class JavaScript implements Language {
 			}
 		}
 
-		const exportedIdentifiers = await getExportedIdentifiers(codeTree, fileIdentifierCache)
+		const exportedIdentifiers = await getExportedIdentifiers(codeTree, exportedIdentifierCache)
 
-		for (const [name, identifier] of exportedIdentifiers) {
+		for (const [exportedName, identifier] of exportedIdentifiers) {
 			const sourcePath = _.last(identifier.pathList)
-			const item = name === '*default'
-				? new FileDefaultItem(filePath, identifier.originalName, identifier.sourceText, sourcePath)
-				: new FileIdentifierItem(filePath, 'named', name, identifier.sourceText, sourcePath)
+			const item = exportedName === '*default'
+				? new FileDefaultItem(filePath, identifier.sourceText, sourcePath)
+				: new FileIdentifierItem(filePath, 'named', exportedName, identifier.originalName, identifier.sourceText, sourcePath)
 			this.fileCache.push(item)
 
-			if (INDEX_FILE_PATTERN.test(filePath) || identifier.pathList.length > (this.preferentialImportPaths.get(item.graphId)?.length || 0)) {
-				this.preferentialImportPaths.set(item.graphId, identifier.pathList)
-			}
+			const list = _.union(this.transitExportTracer.get(item.traceID), [item])
+			this.transitExportTracer.set(item.traceID, list)
 		}
 	}
 
@@ -354,16 +353,16 @@ export default class JavaScript implements Language {
 					const links = await vscode.workspace.findFiles('**/*')
 
 					// Create empty cache objects which will be used in another function
-					const fileIdentifierCache = new Map<FilePath, IdentifierMap>()
+					const exportedIdentifierCache = new Map<FilePath, IdentifierMap>()
 					const fullPathCache = _.fromPairs(links.map(link => [link.fsPath, true]))
 
 					for (const link of links) {
-						await this.setFileCache(link.fsPath, fileIdentifierCache, fullPathCache)
+						await this.setFileCache(link.fsPath, exportedIdentifierCache, fullPathCache)
 					}
 
 					// Add namespace-imported to the list
 					for (const [filePath, { name, sourceText }] of this.namespaceImportCache) {
-						this.fileCache.push(new FileIdentifierItem(filePath, 'namespace', name, sourceText, filePath))
+						this.fileCache.push(new FileIdentifierItem(filePath, 'namespace', name, undefined, sourceText, filePath))
 					}
 				}
 
@@ -390,26 +389,15 @@ export default class JavaScript implements Language {
 
 		const fileFilter = this.createFileFilter(document)
 		const contextAwareFileItems = this.fileCache.filter(item =>
-			// Exclude files according to the environmental context
+			// Exclude the files according to the environmental context
 			fileFilter(item.info) &&
 			// Exclude the current opening file
 			item.info.fullPath !== document.fileName &&
-			// Exclude other files importing the current opening file
+			// Exclude the other files importing the current opening file
 			!(item instanceof FileDefaultItem && item.sourcePath === document.fileName)
+			// Exclude the identifiers being re-exported by an upper-level file, for example index.ts
+			// (item instanceof FileDefaultItem ? (this.referentialImportPaths.get(item.traceID)?.length || 0) <= 1 : true)
 		)
-
-		const remainingFiles = new Set(contextAwareFileItems.map(item => item.info.fullPath))
-
-		const uniqueFileItems = contextAwareFileItems.filter(item => {
-			// Exclude identifiers being re-exported by an upper-level file, for example index.ts
-			if (item instanceof FileDefaultItem) {
-				const pathList = this.preferentialImportPaths.get(item.graphId)
-				const ρ = pathList?.find(path => remainingFiles.has(path))
-				return ρ === undefined || ρ === item.info.fullPath
-			}
-
-			return true
-		})
 
 		const packageJsonList = await getPackageJsonList()
 		const packageJsonPath = getClosestPackageJson(document.fileName, packageJsonList)?.packageJsonPath
@@ -419,7 +407,7 @@ export default class JavaScript implements Language {
 		return [
 			...nodeModuleItems,
 			...nodeIdentifierItems,
-			...uniqueFileItems,
+			...contextAwareFileItems,
 		]
 	}
 
@@ -432,8 +420,14 @@ export default class JavaScript implements Language {
 	}
 
 	async cutItem(filePath: string) {
-		this.fileCache = this.fileCache.filter(file => file.info.fullPath !== filePath)
-		this.preferentialImportPaths.delete(filePath)
+		const removingItems = _.remove(this.fileCache, file => file.info.fullPath === filePath)
+
+		for (const item of removingItems) {
+			if (item instanceof FileDefaultItem) {
+				_.pull(this.transitExportTracer.get(item.traceID), item)
+			}
+		}
+
 		this.defaultImportCache.delete(filePath)
 		this.namespaceImportCache.delete(filePath)
 
@@ -877,13 +871,12 @@ class FileDefaultItem extends FileItem {
 	readonly id: string
 	detail: string
 
-	get graphId() {
-		return this.sourcePath + '::' + this.name
+	get traceID() {
+		return this.sourcePath
 	}
 
 	constructor(
 		filePath: string,
-		protected readonly name: string,
 		public readonly sourceText: string,
 		public readonly sourcePath: string,
 	) {
@@ -929,6 +922,18 @@ class FileDefaultItem extends FileItem {
 		const codeTree = await JavaScript.parse(document)
 		if (!codeTree) {
 			return null
+		}
+
+		// Use the shortest path automatically when there is a file that re-exports the selected identifier (for example, an index file) and vice versa depends on the path of the current active document
+		const priorityAlternativeFileItems = _.sortBy(
+			language.transitExportTracer.get(this.traceID),
+			item => (item.info.fullPath === item.sourcePath ? 0 : 1), // Put the origial file first
+			item => item.info.fullPath.split(fp.sep).length * -1, // Put the deeper path first
+			item => (INDEX_FILE_PATTERN.test(item.info.fullPath) ? 1 : 0), // Put index files last
+		)
+		const shortestPathAlternativeItem = priorityAlternativeFileItems.find(item => document.uri.fsPath.startsWith(fp.dirname(item.info.fullPath) + fp.sep)) || _.last(priorityAlternativeFileItems)
+		if (shortestPathAlternativeItem !== this) { // Prevent an infinite loop and allow to fallthrough
+			return shortestPathAlternativeItem.addImport(editor, language)
 		}
 
 		const [existingImports, { name, kind, path }] = await Promise.all([
@@ -1097,23 +1102,28 @@ class FileDefaultItem extends FileItem {
 class FileIdentifierItem extends FileDefaultItem {
 	readonly id: string
 
+	get traceID() {
+		return this.sourcePath + (this.originalName ? '|' + this.originalName : '')
+	}
+
 	constructor(
 		filePath: string,
 		public readonly kind: 'named' | 'namespace',
-		public readonly name: string,
+		public readonly exportedName: string,
+		public readonly originalName: string | undefined,
 		sourceText: string,
 		sourcePath: string,
 	) {
-		super(filePath, name, sourceText, sourcePath)
+		super(filePath, sourceText, sourcePath)
 
-		this.id = filePath + '::' + kind + '::' + name
+		this.id = filePath + '|' + kind + '|' + exportedName
 
-		this.label = name
+		this.label = exportedName
 	}
 
 	protected async getImportPattern(document: vscode.TextDocument, language: JavaScript): Promise<{ name: string, kind: ImportKind, path: string } | null> {
 		return {
-			name: this.name,
+			name: this.exportedName,
 			kind: this.kind,
 			path: await this.getRelativePath(document, language.importPattern),
 		}
@@ -1493,7 +1503,7 @@ class NodeIdentifierItem extends NodeModuleItem {
 	constructor(name: string, kind: 'default' | 'namespace' | 'named', identifier: string) {
 		super(name)
 
-		this.id = name + '::' + identifier + '::' + kind
+		this.id = name + '|' + identifier + '|' + kind
 		this.kind = kind
 		this.identifier = identifier
 
@@ -1812,7 +1822,7 @@ async function getOriginalAndReferencedTopLevelStatements(originalCodeTree: ts.S
 	return codeList
 }
 
-async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cachedFilePaths = new Map<FilePath, IdentifierMap>(), processingFilePaths = new Set<string>()) {
+async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile, cache = new Map<FilePath, IdentifierMap>(), processingFilePaths = new Set<string>()) {
 	const exportedNames: IdentifierMap = new Map()
 
 	if (!filePathOrCodeTree) {
@@ -1821,8 +1831,8 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 
 	const filePath = typeof filePathOrCodeTree === 'string' ? filePathOrCodeTree : filePathOrCodeTree.fileName.replace(/\//g, fp.sep)
 
-	if (cachedFilePaths.has(filePath)) {
-		return cachedFilePaths.get(filePath)
+	if (cache.has(filePath)) {
+		return cache.get(filePath)
 	}
 
 	// Prevent looping indefinitely because of a cyclic dependency
@@ -1900,7 +1910,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 					continue
 				}
 
-				const transitIdentifiers = await getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
+				const transitIdentifiers = await getExportedIdentifiers(path, cache, processingFilePaths)
 
 				if (node.importClause.name) {
 					// Example:
@@ -1953,7 +1963,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 					for (const stub of node.exportClause.elements) {
 						const name = stub.name.text
 						if (path) {
-							const transitIdentifiers = await getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
+							const transitIdentifiers = await getExportedIdentifiers(path, cache, processingFilePaths)
 							if (stub.propertyName && transitIdentifiers.has(δ(stub.propertyName.text))) {
 								// Example:
 								// export { named as exported } from "path"
@@ -2017,7 +2027,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 				} else {
 					// Example:
 					// export * from "path"
-					const transitIdentifiers = await getExportedIdentifiers(path, cachedFilePaths, processingFilePaths)
+					const transitIdentifiers = await getExportedIdentifiers(path, cache, processingFilePaths)
 					transitIdentifiers.forEach(({ originalName, sourceText, sourceKind, pathList }, name) => {
 						exportedNames.set(name, {
 							originalName,
@@ -2212,8 +2222,8 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 		console.error(error)
 	}
 
-	if (cachedFilePaths.has(filePath) === false) {
-		cachedFilePaths.set(filePath, exportedNames)
+	if (cache.has(filePath) === false) {
+		cache.set(filePath, exportedNames)
 	}
 
 	processingFilePaths.delete(filePath)
