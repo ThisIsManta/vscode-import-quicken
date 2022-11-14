@@ -26,7 +26,11 @@
 		"theme": "dark"
 	},
 	"engines": {
-		"vscode": "^1.57.0"
+		"vscode": "^1.73.0"
+	},
+	"volta": {
+		"node": "16.17.0",
+		"npm": "9.1.1"
 	},
 	"activationEvents": [
 		"workspaceContains:**/package.json"
@@ -92,24 +96,24 @@
 		"postinstall": "code --install-extension connor4312.esbuild-problem-matchers",
 		"build": "esbuild edge/extension.ts --bundle --platform=node --outfile=dist/extension.js --external:vscode --external:stylus --external:typescript --format=cjs",
 		"watch": "npm run build -- --watch --sourcemap",
-		"vscode:prepublish": "tsc --skipLibCheck --noEmit && npm run build -- --minify",
+		"vscode:prepublish": "tsc --noEmit && npm run build -- --minify",
 		"preversion": "eslint --quiet edge/**/*.ts && git push --dry-run origin master:master",
 		"version": "vsce publish",
 		"postversion": "git push --tags --quiet origin master:master"
 	},
 	"devDependencies": {
-		"@types/glob": "^7.2.0",
-		"@types/lodash": "^4.14.182",
+		"@types/glob": "^8.0.0",
+		"@types/lodash": "^4.14.188",
 		"@types/mz": "0.0.32",
-		"@types/node": "^14.18.22",
-		"esbuild": "^0.14.49",
+		"@types/node": "<=16.17.0",
+		"@types/vscode": "^1.73.0",
+		"esbuild": "^0.15.13",
 		"glob": "^8.0.3",
 		"high-standard": "^2.1.2",
-		"lodash": "^4.17.21",
-		"vscode": "^1.1.37"
+		"lodash": "^4.17.21"
 	},
 	"dependencies": {
-		"stylus": "^0.58.1",
-		"typescript": "^4.3.4"
+		"stylus": "^0.59.0",
+		"typescript": "^4.8.4"
 	}
 }

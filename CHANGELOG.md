@@ -1,3 +1,6 @@
+## 2.0.1
+- Upgrade dependencies.
+
 ## 2.0.0
 - Improve start-up time.
 - Use the shortest path automatically when there is a file that re-exports the selected identifier (for example, an index file) and vice versa depends on the path of the current active document.
