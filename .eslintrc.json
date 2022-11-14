@@ -496,7 +496,7 @@
 		],
 		"lodash/chaining": [
 			"error",
-			"always"
+			"never"
 		],
 		"lodash/collection-method-value": "error",
 		"lodash/identity-shorthand": [
@@ -505,7 +505,7 @@
 		],
 		"lodash/import-scope": [
 			"error",
-			"full"
+			"method"
 		],
 		"lodash/no-extra-args": "error",
 		"lodash/no-unbound-this": "error",

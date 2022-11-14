@@ -1,4 +1,4 @@
-import * as _ from 'lodash'
+import last from 'lodash/last'
 import * as fp from 'path'
 
 const PATH_SEPARATOR_FOR_WINDOWS = /\\/g
@@ -26,7 +26,7 @@ export default class FileInfo {
 		this.fileExtensionWithoutLeadingDot = fp.extname(this.fullPath).replace(/^\./, '')
 		this.fileNameWithExtension = fp.basename(this.fullPath)
 		this.fileNameWithoutExtension = this.fileNameWithExtension.replace(new RegExp('\\.' + this.fileExtensionWithoutLeadingDot + '$', 'i'), '')
-		this.directoryName = _.last(fp.dirname(this.fullPath).split(fp.sep))
+		this.directoryName = last(fp.dirname(this.fullPath).split(fp.sep))
 		this.directoryPath = fp.dirname(this.fullPath)
 		this.directoryPathForPOSIX = getPosixPath(fp.dirname(this.fullPath))
 	}

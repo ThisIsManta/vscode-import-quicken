@@ -1,4 +1,5 @@
-import * as _ from 'lodash'
+import defer from 'lodash/defer'
+import sortBy from 'lodash/sortBy'
 import * as vscode from 'vscode'
 
 import FileChangeQueue from './FileChangeQueue'
@@ -120,7 +121,7 @@ export function activate(context: vscode.ExtensionContext) {
 							hash[id] = rank
 							return hash
 						}, {})
-						items = _.sortBy(items, item => hash[item.id] ?? Infinity)
+						items = sortBy(items, item => hash[item.id] ?? Infinity)
 					}
 				}
 
@@ -169,7 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 				picker.dispose()
 
-				_.defer(() => {
+				defer(() => {
 					// Insert the snippet
 					selectedItem.addImport(editor, language)
 

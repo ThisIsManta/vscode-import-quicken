@@ -1,4 +1,4 @@
-import * as _ from 'lodash'
+import uniq from 'lodash/uniq'
 import * as fp from 'path'
 import * as vscode from 'vscode'
 
@@ -70,10 +70,10 @@ export async function findFilesRoughly(filePath: string, fileExtensions?: Array<
 
 export async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, defaultExtensions = ['tsx', 'ts', 'jsx', 'js'], fullPathCache?: { [fullPath: string]: boolean }): Promise<string> {
 	const fullPath = fp.resolve(...pathList)
-	const possibleExtensions = _.chain([preferredExtension.toLowerCase(), ...defaultExtensions])
-		.map(extension => extension.replace(/^\./, ''))
-		.uniq()
-		.value()
+	const possibleExtensions = uniq(
+		[preferredExtension.toLowerCase(), ...defaultExtensions]
+			.map(extension => extension.replace(/^\./, ''))
+	)
 
 	if (fullPathCache) {
 		if (fp.extname(fullPath) && fullPathCache[fullPath]) {

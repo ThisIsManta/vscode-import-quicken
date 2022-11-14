@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs'
-import * as _ from 'lodash'
+import memoize from 'lodash/memoize'
 
-export const isFile = _.memoize(async (path: string): Promise<boolean> => {
+export const isFile = memoize(async (path: string): Promise<boolean> => {
 	setTimeout(() => {
 		isFile.cache.clear()
 	}, 1000)
@@ -14,7 +14,7 @@ export const isFile = _.memoize(async (path: string): Promise<boolean> => {
 	}
 })
 
-export const isDirectory = _.memoize(async (path: string): Promise<boolean> => {
+export const isDirectory = memoize(async (path: string): Promise<boolean> => {
 	setTimeout(() => {
 		isDirectory.cache.clear()
 	}, 1000)
@@ -27,7 +27,7 @@ export const isDirectory = _.memoize(async (path: string): Promise<boolean> => {
 	}
 })
 
-export const isFileOrDirectory = _.memoize(async (path: string): Promise<boolean> => {
+export const isFileOrDirectory = memoize(async (path: string): Promise<boolean> => {
 	setTimeout(() => {
 		isFileOrDirectory.cache.clear()
 	}, 1000)

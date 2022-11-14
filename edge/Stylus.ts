@@ -1,5 +1,8 @@
 import * as fs from 'fs/promises'
-import * as _ from 'lodash'
+import get from 'lodash/get'
+import isFunction from 'lodash/isFunction'
+import isObject from 'lodash/isObject'
+import trim from 'lodash/trim'
 import * as fp from 'path'
 import { Parser, nodes as Nodes } from 'stylus'
 import * as vscode from 'vscode'
@@ -93,7 +96,7 @@ export default class Stylus implements Language {
 
 		const documentFileInfo = new FileInfo(document.fileName)
 
-		const filteredFileItems = _.reject(this.fileItemCache, item => item.fileInfo.fullPath === documentFileInfo.fullPath)
+		const filteredFileItems = this.fileItemCache.filter(item => item.fileInfo.fullPath !== documentFileInfo.fullPath)
 
 		return filteredFileItems
 	}
@@ -139,10 +142,10 @@ export default class Stylus implements Language {
 
 			let path: string
 			if (node instanceof Nodes.Import) {
-				path = _.get(node, 'path.nodes.0')
+				path = get(node, 'path.nodes.0')
 
 			} else if (node instanceof Nodes.Call) {
-				path = _.get(node, 'args.nodes.0.nodes.0')
+				path = get(node, 'args.nodes.0.nodes.0')
 			}
 
 			if (path && await isFileOrDirectory(path) === false) {
@@ -235,11 +238,11 @@ class FileItem implements Item {
 
 		this.fileInfo = fileInfo
 
-		this.description = _.trim(fp.dirname(this.fileInfo.fullPath.substring(rootPath.length)), fp.sep)
+		this.description = trim(fp.dirname(this.fileInfo.fullPath.substring(rootPath.length)), fp.sep)
 
 		if (indexFileCount < 0 && this.fileInfo.fileNameWithExtension === 'index.styl') {
 			this.label = this.fileInfo.directoryName
-			this.description = _.trim(this.fileInfo.fullPath.substring(rootPath.length), fp.sep)
+			this.description = trim(this.fileInfo.fullPath.substring(rootPath.length), fp.sep)
 
 		} else if (fileExtensionCount < 0 && this.fileInfo.fileExtensionWithoutLeadingDot === 'styl') {
 			this.label = this.fileInfo.fileNameWithoutExtension
@@ -321,14 +324,14 @@ function getExistingImportsAndUrls(node: any, visitedNodes = new Set()) {
 	} else if (node.nodeName === 'hsla' || node.nodeName === 'rgba') { // Prevent infinite recursion
 		return []
 
-	} else if (_.isObject(node)) {
+	} else if (isObject(node)) {
 		const results = []
 		for (const key in node) {
-			if (key === 'first' || key === 'parent' || _.isFunction(node[key])) {
+			if (key === 'first' || key === 'parent' || isFunction(node[key])) {
 				continue
 			}
 
-			if (_.isObject(node[key])) {
+			if (isObject(node[key])) {
 				results.push(...getExistingImportsAndUrls(node[key], visitedNodes))
 			}
 		}

@@ -1,5 +1,6 @@
 ## 2.0.1
 - Upgrade dependencies.
+- Reduce bundle size.
 
 ## 2.0.0
 - Improve start-up time.
