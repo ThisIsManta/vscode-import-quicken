@@ -140,7 +140,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 			const picker = vscode.window.createQuickPick<Item>()
 			picker.busy = initializing
-			picker.placeholder = 'Type a file path or node module name'
+			picker.placeholder = 'Search files, identifiers or modules'
 			picker.matchOnDescription = true
 			picker.items = await getItems()
 
