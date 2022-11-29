@@ -2425,12 +2425,16 @@ async function checkYarnWorkspace(packageJsonPath: string, yarnLockPath: string)
 	}
 
 	// See https://yarnpkg.com/lang/en/docs/workspaces/
-	const packageJsonForYarnWorkspace = JSON.parse(await fs.readFile(fp.join(fp.dirname(yarnLockPath), 'package.json'), 'utf-8')) as { private?: boolean, workspaces?: Array<string> }
+	const packageJsonForYarnWorkspace = JSON.parse(await fs.readFile(fp.join(fp.dirname(yarnLockPath), 'package.json'), 'utf-8')) as { private?: boolean, workspaces?: Array<string> | { packages?: Array<string> } }
 	if (!packageJsonForYarnWorkspace || packageJsonForYarnWorkspace.private !== true || !packageJsonForYarnWorkspace.workspaces) {
 		return false
 	}
 
-	const yarnWorkspacePathList = packageJsonForYarnWorkspace.workspaces
+	const yarnWorkspacePathList = (
+		Array.isArray(packageJsonForYarnWorkspace.workspaces)
+			? packageJsonForYarnWorkspace.workspaces
+			: packageJsonForYarnWorkspace.workspaces.packages || []
+	)
 		.flatMap(pathOrGlob => glob.sync(pathOrGlob, {
 			cwd: fp.dirname(yarnLockPath),
 			absolute: true,

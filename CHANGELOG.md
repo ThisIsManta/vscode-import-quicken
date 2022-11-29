@@ -1,3 +1,6 @@
+## 2.0.2
+- Fix critical error when checking Yarn workspaces.
+
 ## 2.0.1
 - Upgrade dependencies.
 - Reduce bundle size.
