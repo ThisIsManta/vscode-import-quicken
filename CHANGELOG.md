@@ -1,5 +1,6 @@
 ## 2.0.2
 - Fix critical error when checking Yarn workspaces.
+- Fix critical error when having no `dependencies` field.
 
 ## 2.0.1
 - Upgrade dependencies.

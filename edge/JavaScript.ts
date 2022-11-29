@@ -7,6 +7,7 @@ import difference from 'lodash/difference'
 import escapeRegExp from 'lodash/escapeRegExp'
 import findLast from 'lodash/findLast'
 import first from 'lodash/first'
+import isObject from 'lodash/isObject'
 import last from 'lodash/last'
 import lowerCase from 'lodash/lowerCase'
 import memoize from 'lodash/memoize'
@@ -344,7 +345,7 @@ export default class JavaScript implements Language {
 					const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
 					const dependencyNameList = uniq(
 						[packageJson.devDependencies, packageJson.dependencies]
-							.flatMap(item => Object.keys(item))
+							.flatMap(item => (isObject(item) ? Object.keys(item) : []))
 					)
 
 					if (dependencyNameList.some(name => name === '@types/node')) {
