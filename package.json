@@ -2,7 +2,7 @@
 	"name": "import-quicken",
 	"displayName": "Manta's Import Quicken",
 	"description": "Insert import/require statements quickly.",
-	"version": "2.0.2",
+	"version": "2.0.3",
 	"publisher": "thisismanta",
 	"categories": [
 		"Snippets"
