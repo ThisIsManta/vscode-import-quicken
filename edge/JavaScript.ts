@@ -75,9 +75,23 @@ const getPackageJsonList = memoize(async () => {
 
 const getModuleFiles = memoize((modulePath: string) => {
 	return new Promise<Array<string>>((resolve, reject) => {
-		glob(fp.join('**', '*.js'), { cwd: modulePath }, (ex, files) => {
-			ex ? reject(ex) : resolve(files.filter(fileName => !fileName.startsWith('_')))
-		})
+		glob(
+			// Do not use backslashes (Windows) in a Glob pattern
+			// See https://www.npmjs.com/package/glob#Windows
+			fp.posix.join('**', '*.js'),
+			{
+				cwd: modulePath,
+				ignore: 'node_modules',
+			},
+			(ex, relativeFilePaths) => {
+				if (ex) {
+					reject(ex)
+
+				} else {
+					resolve(relativeFilePaths)
+				}
+			}
+		)
 	})
 })
 
@@ -1285,11 +1299,12 @@ class NodeModuleItem implements Item {
 					throw new Error('Could not find "modulePath"')
 				}
 
-				const files = await getModuleFiles(modulePath)
+				const relativeFilePaths = await getModuleFiles(modulePath)
+				const publicRelativeFilePaths = relativeFilePaths.filter(path => !path.split(/\\|\//g).some(slug => slug.startsWith('_')))
 
 				return {
 					modulePath,
-					items: files.map(file => ({ label: file })),
+					items: publicRelativeFilePaths.map(path => ({ label: path })),
 				}
 			})()
 
@@ -1327,7 +1342,7 @@ class NodeModuleItem implements Item {
 			const { modulePath } = await directImportResolution
 			const file = new FileInfo(fp.join(modulePath, select))
 
-			const path = normalizeImportPath(this.name + '/' + select.replace(/\\/g, '/'), file, getImportPattern())
+			const path = normalizeImportPath(this.name + '/' + select.replace(/\\/g, fp.posix.sep), file, getImportPattern())
 
 			const { kind, name } = await (async (): Promise<{ kind: ImportKind, name: string }> => {
 				if (language.defaultImportCache.has(path)) {

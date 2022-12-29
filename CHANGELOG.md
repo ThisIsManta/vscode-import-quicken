@@ -1,3 +1,6 @@
+## 2.0.3
+- Fix could not scan node modules for direct file imports.
+
 ## 2.0.2
 - Fix critical error when checking Yarn workspaces.
 - Fix critical error when having no `dependencies` field.
