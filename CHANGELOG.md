@@ -1,3 +1,6 @@
+## 2.0.4
+- Improve start-up time.
+
 ## 2.0.3
 - Fix could not scan node modules for direct file imports.
 
