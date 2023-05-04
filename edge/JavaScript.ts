@@ -1138,7 +1138,7 @@ class FileIdentifierItem extends FileDefaultItem {
 	readonly id: string
 
 	get traceID() {
-		return this.sourcePath + (this.originalName ? '|' + this.originalName : '')
+		return this.sourcePath + '|' + (this.originalName || this.exportedName)
 	}
 
 	constructor(
@@ -1923,6 +1923,7 @@ async function getExportedIdentifiers(filePathOrCodeTree: string | ts.SourceFile
 				node.name?.text
 			) {
 				localNames.set(node.name.text, {
+					originalName: node.name.text,
 					sourceText: node.getText(),
 					sourceKind: node.kind,
 					pathList: [],
