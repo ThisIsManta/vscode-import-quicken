@@ -110,6 +110,6 @@
 		"high-standard": "^2.1.2",
 		"lodash": "^4.17.21",
 		"stylus": "^0.59.0",
-		"typescript": "^4.8.4"
+		"typescript": "^5.0.4"
 	}
 }

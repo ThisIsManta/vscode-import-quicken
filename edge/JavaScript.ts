@@ -107,11 +107,11 @@ const getDeclarationIdentifiers = memoize(async (moduleName: string, declaration
 		// Find `declare module '???' { ... }` where ??? is the module name
 		if (moduleName) {
 			for (const node of await getDeclarationIdentifiersFromReference(nodeList, [moduleName], codeTree.fileName)) {
-				if (node.modifiers && node.modifiers.some(node => node.kind === ts.SyntaxKind.ExportKeyword) && (node as any).name) {
+				if (ts.canHaveModifiers(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) && isNonComputedNamedNode(node)) {
 					// Gather `export`
-					identifiers.push((node as any).name.text)
+					identifiers.push(node.name.text)
 
-				} else if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
+				} else if (ts.isModuleDeclaration(node)) {
 					// Gather `namespace`
 					// See https://github.com/date-fns/date-fns/blob/91726f2ab6ac070a71f1a5caa39689a41f200944/typings.d.ts#L97
 					identifiers.push(node.name.text)
@@ -134,8 +134,8 @@ const getDeclarationIdentifiers = memoize(async (moduleName: string, declaration
 						}
 					}
 
-				} else {
-					identifiers.push((node as any).name?.text)
+				} else if (isNonComputedNamedNode(node)) {
+					identifiers.push(node.name.text)
 				}
 			}
 		}
@@ -2576,4 +2576,8 @@ function hasExportDefault(codeTree: Pick<ts.SourceFile, 'statements'>) {
 			node.expression.left.name.text === 'exports'
 		)
 	)
+}
+
+function isNonComputedNamedNode(node: ts.Node): node is ts.DeclarationStatement {
+	return 'name' in node && (ts.isIdentifier((node as ts.NamedDeclaration).name) || ts.isStringLiteral((node as ts.NamedDeclaration).name))
 }
