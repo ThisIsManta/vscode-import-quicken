@@ -144,7 +144,7 @@ export function activate(context: vscode.ExtensionContext) {
 			picker.matchOnDescription = true
 			picker.items = await getItems()
 
-			let timerId: NodeJS.Timer
+			let timerId: NodeJS.Timeout
 			if (initializing) {
 				timerId = setInterval(async () => {
 					picker.items = await getItems()

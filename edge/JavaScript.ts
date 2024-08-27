@@ -1,6 +1,6 @@
 import * as cp from 'child_process'
 import * as fs from 'fs/promises'
-import glob from 'glob'
+import { glob } from 'glob'
 import compact from 'lodash/compact'
 import countBy from 'lodash/countBy'
 import difference from 'lodash/difference'
@@ -74,25 +74,15 @@ const getPackageJsonList = memoize(async () => {
 })
 
 const getModuleFiles = memoize((modulePath: string) => {
-	return new Promise<Array<string>>((resolve, reject) => {
-		glob(
-			// Do not use backslashes (Windows) in a Glob pattern
-			// See https://www.npmjs.com/package/glob#Windows
-			fp.posix.join('**', '*.js'),
-			{
-				cwd: modulePath,
-				ignore: 'node_modules',
-			},
-			(ex, relativeFilePaths) => {
-				if (ex) {
-					reject(ex)
-
-				} else {
-					resolve(relativeFilePaths)
-				}
-			}
-		)
-	})
+	return glob(
+		// Do not use backslashes (Windows) in a Glob pattern
+		// See https://www.npmjs.com/package/glob#Windows
+		fp.posix.join('**', '*.js'),
+		{
+			cwd: modulePath,
+			ignore: 'node_modules',
+		}
+	)
 })
 
 /**

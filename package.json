@@ -26,11 +26,8 @@
 		"theme": "dark"
 	},
 	"engines": {
-		"vscode": "^1.73.0"
-	},
-	"volta": {
-		"node": "18.16.0",
-		"npm": "9.6.5"
+		"node": ">=18.0.0",
+		"vscode": "^1.92.0"
 	},
 	"activationEvents": [
 		"workspaceContains:**/package.json"
@@ -94,22 +91,21 @@
 	},
 	"scripts": {
 		"postinstall": "code --install-extension connor4312.esbuild-problem-matchers",
-		"build": "rm -rf dist && esbuild edge/extension.ts --bundle --platform=node --outfile=dist/extension.js --external:vscode --format=cjs",
+		"build": "rm -rf dist && esbuild edge/extension.ts --bundle --platform=node --outfile=dist/extension.js --external:vscode --external:typescript --format=cjs",
 		"watch": "npm run build -- --watch --sourcemap",
 		"vscode:prepublish": "npm run build -- --minify",
-		"version": "npx vsce publish -p $VSCE_PUBLISH_TOKEN"
+		"version": "npx @vscode/vsce publish --pat $VSCE_PUBLISH_TOKEN"
 	},
 	"devDependencies": {
-		"@thisismanta/semantic-version": "^5.0.2",
-		"@types/glob": "^8.0.0",
-		"@types/lodash": "^4.14.194",
-		"@types/node": ">=18.0.0",
-		"@types/vscode": "^1.73.0",
-		"esbuild": "^0.17.18",
-		"glob": "^8.0.3",
-		"high-standard": "^2.1.2",
+		"@thisismanta/semantic-version": "^9.1.0",
+		"@types/lodash": "^4.17.7",
+		"@types/node": "^18.0.0",
+		"@types/vscode": "^1.92.0",
+		"esbuild": "^0.23.1",
+		"glob": "^11.0.0",
+		"lefthook": "^1.7.14",
 		"lodash": "^4.17.21",
-		"stylus": "^0.59.0",
-		"typescript": "^5.0.4"
+		"stylus": "^0.63.0",
+		"typescript": "^5.5.4"
 	}
 }
