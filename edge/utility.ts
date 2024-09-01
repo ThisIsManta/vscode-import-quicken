@@ -1,4 +1,4 @@
-import { promises as fs } from 'fs'
+import * as fs from 'fs/promises'
 import memoize from 'lodash/memoize'
 
 export const isFile = memoize(async (path: string): Promise<boolean> => {

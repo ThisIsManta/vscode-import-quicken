@@ -1,6 +1,5 @@
 import * as fs from 'fs/promises'
 import get from 'lodash/get'
-import isFunction from 'lodash/isFunction'
 import isObject from 'lodash/isObject'
 import trim from 'lodash/trim'
 import * as fp from 'path'
@@ -327,7 +326,7 @@ function getExistingImportsAndUrls(node: any, visitedNodes = new Set()) {
 	} else if (isObject(node)) {
 		const results = []
 		for (const key in node) {
-			if (key === 'first' || key === 'parent' || isFunction(node[key])) {
+			if (key === 'first' || key === 'parent' || typeof node[key] === 'function') {
 				continue
 			}
 

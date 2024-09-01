@@ -2,7 +2,7 @@
 	"pre-commit": {
 		"commands": {
 			"type": {
-				"run": "npx tsc --noEmit"
+				"run": "npx tsc"
 			}
 		}
 	},
