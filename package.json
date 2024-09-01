@@ -31,7 +31,11 @@
 		"vscode": "^1.92.0"
 	},
 	"activationEvents": [
-		"workspaceContains:**/package.json"
+		"onLanguage:javascript",
+		"onLanguage:javascriptreact",
+		"onLanguage:typescript",
+		"onLanguage:typescriptreact",
+		"onLanguage:stylus"
 	],
 	"main": "dist/extension.js",
 	"files": [
