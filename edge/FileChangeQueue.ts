@@ -2,15 +2,21 @@ import * as fs from 'fs'
 import * as vscode from 'vscode'
 
 export default class FileChangeQueue extends vscode.Disposable {
-	private fileChangeList: Array<{ filePath: string, removed: boolean }> = []
+	private fileChangeList: Array<{ filePath: string
+		removed: boolean }> = []
+
 	private lastTimeout: NodeJS.Timeout = null
 	private processing = false
-	private onFileChange: (file: { filePath: string, removed: boolean }) => Promise<void>
+	private onFileChange: (file: { filePath: string
+		removed: boolean }) => Promise<void>
+
 	private disposed = false
 
-	constructor(onFileChange: (file: { filePath: string, removed: boolean }) => Promise<void>) {
+	constructor(onFileChange: (file: { filePath: string
+		removed: boolean }) => Promise<void>) {
 		super(() => {
 			this.fileChangeList.splice(0, this.fileChangeList.length)
+
 			if (this.lastTimeout !== null) {
 				clearTimeout(this.lastTimeout)
 			}

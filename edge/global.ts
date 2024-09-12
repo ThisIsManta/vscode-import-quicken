@@ -12,18 +12,18 @@ export interface ExtensionConfiguration {
 }
 
 export interface Language extends vscode.Disposable {
-	setUserConfiguration(config: ExtensionConfiguration): void
-	setItems(): Promise<void>
-	getItems(document: vscode.TextDocument): Promise<Array<Item> | null>
-	addItem(filePath: string): Promise<void>
-	cutItem(filePath: string): Promise<void>
-	fixImport?(editor: vscode.TextEditor, document: vscode.TextDocument, cancellationToken: vscode.CancellationToken): Promise<boolean | null>
-	convertImport?(editor: vscode.TextEditor): Promise<boolean | null>
+	setUserConfiguration: (config: ExtensionConfiguration) => void
+	setItems: () => Promise<void>
+	getItems: (document: vscode.TextDocument) => Promise<Array<Item> | null>
+	addItem: (filePath: string) => Promise<void>
+	cutItem: (filePath: string) => Promise<void>
+	fixImport?: (editor: vscode.TextEditor, document: vscode.TextDocument, cancellationToken: vscode.CancellationToken) => Promise<boolean | null>
+	convertImport?: (editor: vscode.TextEditor) => Promise<boolean | null>
 }
 
 export interface Item extends vscode.QuickPickItem {
 	readonly id: string
-	addImport(editor: vscode.TextEditor, language: Language): Promise<void>
+	addImport: (editor: vscode.TextEditor, language: Language) => Promise<void>
 }
 
 export function setImportNameToClipboard(name: string) {
@@ -37,7 +37,6 @@ export async function findFilesRoughly(filePath: string, fileExtensions?: Array<
 	const fileName = fp.basename(filePath)
 
 	let fileLinks = await vscode.workspace.findFiles('**/' + fileName)
-
 	if (fileExtensions) {
 		for (const fileExtension of fileExtensions) {
 			if (fileName.toLowerCase().endsWith('.' + fileExtension)) {
@@ -50,7 +49,6 @@ export async function findFilesRoughly(filePath: string, fileExtensions?: Array<
 	}
 
 	const matchingPaths = fileLinks.map(item => item.fsPath)
-
 	if (matchingPaths.length > 1) {
 		// Given originalPath = '../../../abc/xyz.js'
 		// Set originalPathList = ['abc', 'xyz.js']
@@ -68,12 +66,10 @@ export async function findFilesRoughly(filePath: string, fileExtensions?: Array<
 	return matchingPaths
 }
 
-export async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, defaultExtensions = ['tsx', 'ts', 'jsx', 'js'], fullPathCache?: { [fullPath: string]: boolean }): Promise<string> {
+export async function tryGetFullPath(pathList: Array<string>, preferredExtension: string, defaultExtensions = ['tsx', 'ts', 'jsx', 'js'], fullPathCache?: { [fullPath: string]: boolean }): Promise<string | undefined> {
 	const fullPath = fp.resolve(...pathList)
-	const possibleExtensions = uniq(
-		[preferredExtension.toLowerCase(), ...defaultExtensions]
-			.map(extension => extension.replace(/^\./, ''))
-	)
+	const possibleExtensions = uniq([preferredExtension.toLowerCase(), ...defaultExtensions]
+		.map(extension => extension.replace(/^\./, '')))
 
 	if (fullPathCache) {
 		if (fp.extname(fullPath) && fullPathCache[fullPath]) {
@@ -112,4 +108,6 @@ export async function tryGetFullPath(pathList: Array<string>, preferredExtension
 			return indexPath
 		}
 	}
+
+	return undefined
 }

@@ -27,7 +27,6 @@ export default class Stylus implements Language {
 
 	async setItems() {
 		const fileLinks = await vscode.workspace.findFiles('**/*.{styl,css,jpg,jpeg,png,gif,svg,otf,ttf,woff,woff2,eot}')
-
 		for (const fileLink of fileLinks) {
 			const rootPath = vscode.workspace.getWorkspaceFolder(fileLink).uri.fsPath
 			this.fileItemCache.push(new FileItem(new FileInfo(fileLink.fsPath), rootPath))
@@ -51,7 +50,6 @@ export default class Stylus implements Language {
 				}
 
 				const [, syntax, semiColon] = lines[node.lineno - 1].match(/@(import|require)\s+(?:'|").+?(?:'|")\s*(;?)/) || []
-
 				if (syntax === 'import') {
 					importSyntaxCount += 1
 
@@ -154,6 +152,7 @@ export default class Stylus implements Language {
 
 		if (brokenImports.length === 0) {
 			vscode.window.setStatusBarMessage('No broken import/require statements have been found.', 5000)
+
 			return null
 		}
 
@@ -173,7 +172,6 @@ export default class Stylus implements Language {
 			}
 
 			const matchingFullPaths = await findFilesRoughly(node.val, ['styl'])
-
 			if (matchingFullPaths.length === 0) {
 				unsolvableImports.push(node)
 
@@ -186,7 +184,6 @@ export default class Stylus implements Language {
 			} else {
 				const candidateItems = matchingFullPaths.map(path => new FileItem(new FileInfo(path), rootPath))
 				const selectedItem = await vscode.window.showQuickPick(candidateItems, { placeHolder: node.val })
-
 				if (!selectedItem) {
 					return null
 				}
@@ -221,6 +218,7 @@ export default class Stylus implements Language {
 
 		} catch (error) {
 			console.error(error)
+
 			return null
 		}
 	}
@@ -253,7 +251,6 @@ class FileItem implements Item {
 
 	getRelativePath(directoryPathOfWorkingDocument: string) {
 		let path = this.fileInfo.getRelativePath(directoryPathOfWorkingDocument)
-
 		if (indexFileCount < 0 && this.fileInfo.fileNameWithExtension === 'index.styl') {
 			path = fp.dirname(path)
 
@@ -270,7 +267,6 @@ class FileItem implements Item {
 		const directoryPathOfWorkingDocument = new FileInfo(document.fileName).directoryPath
 
 		const quote = singleQuoteCount > doubleQuoteCount ? '\'' : '"'
-
 		if (/^(styl|css)$/i.test(this.fileInfo.fileExtensionWithoutLeadingDot)) {
 			const path = this.getRelativePath(directoryPathOfWorkingDocument)
 
@@ -284,9 +280,11 @@ class FileItem implements Item {
 					const duplicateImport = topLevelImports.find(node => node.path && node.path.hash === path)
 					if (duplicateImport) {
 						vscode.window.showInformationMessage(`The module "${this.label}" has been already imported.`)
+
 						const position = new vscode.Position(duplicateImport.lineno - 1, duplicateImport.column)
 						editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenterIfOutsideViewport)
-						return null
+
+						return
 					}
 				}
 			}
@@ -317,10 +315,11 @@ function getExistingImportsAndUrls(node: any, visitedNodes = new Set()) {
 
 	visitedNodes.add(node)
 
-	if (node instanceof Nodes.Import || node instanceof Nodes.Call && node.name === 'url' && node.args && node.args.nodes.length === 1) {
+	if (node instanceof Nodes.Import || (node instanceof Nodes.Call && node.name === 'url' && node.args && node.args.nodes.length === 1)) {
 		return [node]
 
-	} else if (node.nodeName === 'hsla' || node.nodeName === 'rgba') { // Prevent infinite recursion
+	} else if (node.nodeName === 'hsla' || node.nodeName === 'rgba') {
+		// Prevent infinite recursion
 		return []
 
 	} else if (isObject(node)) {

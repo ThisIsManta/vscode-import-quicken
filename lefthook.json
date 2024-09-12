@@ -1,8 +1,8 @@
 {
 	"pre-commit": {
 		"commands": {
-			"type": {
-				"run": "npx tsc"
+			"lint": {
+				"run": "npm run lint -- --fix --no-progress && git add {staged_files}"
 			}
 		}
 	},

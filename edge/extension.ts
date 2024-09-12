@@ -63,24 +63,29 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(fileWatcher.onDidCreate(e => {
 		fileChanges.add(e.fsPath)
+
 		if (initializing === false) {
 			fileChanges.processLazily()
 		}
 	}))
 	context.subscriptions.push(fileWatcher.onDidDelete(e => {
 		fileChanges.remove(e.fsPath)
+
 		if (initializing === false) {
 			fileChanges.processLazily()
 		}
 	}))
+
 	const recentlyChangedActiveFileList = new Set<string>()
 	context.subscriptions.push(fileWatcher.onDidChange(e => {
 		if (vscode.window.activeTextEditor && e.fsPath === vscode.window.activeTextEditor.document.uri.fsPath) {
 			recentlyChangedActiveFileList.add(e.fsPath)
+
 			return
 		}
 
 		fileChanges.add(e.fsPath)
+
 		if (initializing === false) {
 			fileChanges.processLazily()
 		}
@@ -104,10 +109,9 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.commands.registerCommand('importQuicken.addImport', async () => {
 		const editor = vscode.window.activeTextEditor
 		const document = editor && editor.document
-
 		// Stop processing if the VS Code is not working with folder, or the current document is untitled
 		if (editor === undefined || document.isUntitled || vscode.workspace.getWorkspaceFolder(document.uri) === undefined) {
-			return null
+			return
 		}
 
 		for (const language of languages) {
@@ -119,6 +123,7 @@ export function activate(context: vscode.ExtensionContext) {
 					if (usedIds.length > 0) {
 						const hash: { [id: string]: number } = usedIds.reduce((hash, id, rank) => {
 							hash[id] = rank
+
 							return hash
 						}, {})
 						items = sortBy(items, item => hash[item.id] ?? Infinity)
@@ -135,7 +140,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 			// Stop processing if the active editor has been changed
 			if (editor !== vscode.window.activeTextEditor) {
-				return null
+				return
 			}
 
 			const picker = vscode.window.createQuickPick<Item>()
@@ -165,7 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
 			picker.onDidAccept(() => {
 				const [selectedItem] = picker.selectedItems
 				if (!selectedItem) {
-					return null
+					return
 				}
 
 				picker.dispose()
@@ -205,17 +210,16 @@ export function activate(context: vscode.ExtensionContext) {
 
 		const editor = vscode.window.activeTextEditor
 		const document = editor.document
-
 		// Stop processing if the VS Code is not working with folder, or the current document is untitled
 		if (editor === undefined || document.isUntitled || vscode.workspace.getWorkspaceFolder(document.uri) === undefined) {
-			return null
+			return
 		}
 
 		const cancellationEvent = new vscode.CancellationTokenSource()
 		const editorChangeEvent = vscode.window.onDidChangeActiveTextEditor(() => {
 			cancellationEvent.cancel()
 		})
-		const documentCloseEvent = vscode.workspace.onDidCloseTextDocument((closingDocument) => {
+		const documentCloseEvent = vscode.workspace.onDidCloseTextDocument(closingDocument => {
 			if (document === closingDocument) {
 				cancellationEvent.cancel()
 			}
@@ -231,10 +235,9 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 
 				const workingDocumentHasBeenFixed = await lang.fixImport(editor, document, cancellationEvent.token)
-
 				// Stop processing if it is handled or cancelled
 				if (workingDocumentHasBeenFixed === true || workingDocumentHasBeenFixed === null) {
-					return null
+					return
 				}
 			}
 
@@ -253,14 +256,13 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		const editor = vscode.window.activeTextEditor
-
 		if (editor === undefined) {
-			return null
+			return
 		}
 
 		for (const language of languages) {
 			if (language.convertImport && await language.convertImport(editor)) {
-				return null
+				return
 			}
 		}
 	}))
